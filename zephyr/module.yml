@@ -1,0 +1,3 @@
+name: dbus-broker
+build:
+  cmake: zephyr
