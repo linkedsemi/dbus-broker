@@ -39,8 +39,14 @@ Broker *broker_free(Broker *broker);
 int broker_run(Broker *broker);
 int broker_update_environment(Broker *broker, const char * const *env, size_t n_env);
 int broker_reload_config(Broker *broker, User *sender_user, uint64_t sender_id, uint32_t sender_serial);
+void broker_request_terminate(Broker *broker); // call from app to terminate broker
 
 C_DEFINE_CLEANUP(Broker *, broker_free);
+
+/* global broker pointer for Zephyr (for external access) */
+#ifdef __ZEPHYR__
+extern Broker *g_broker;
+#endif
 
 /* inline helpers */
 

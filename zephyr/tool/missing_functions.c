@@ -86,7 +86,7 @@ int getgrouplist(const char *user, gid_t group, gid_t *groups, int *ngroups)
     return 1;
 }
 
-/* 
+/*
  * c-rbtree function implementations - needed because _c_public_ visibility
  * attribute may not work correctly in Zephyr build environment
  */
@@ -94,46 +94,3 @@ int getgrouplist(const char *user, gid_t group, gid_t *groups, int *ngroups)
 /* Forward declaration for controller */
 typedef struct Controller Controller;
 typedef struct Message Message;
-
-/* Forward declarations for c-rbtree types */
-// typedef struct CRBNode CRBNode;
-// typedef struct CRBTree CRBTree;
-
-/* c_rbnode_unlink_stale implementation */
-// void c_rbnode_unlink_stale(CRBNode *n)
-// {
-//     ARG_UNUSED(n);
-//     /* Stub implementation - this is needed by some c-rbtree macros */
-// }
-
-/* c_rbtree_first_postorder implementation */
-// CRBNode *c_rbtree_first_postorder(CRBTree *t)
-// {
-//     ARG_UNUSED(t);
-//     return NULL;
-// }
-
-/* c_rbnode_next_postorder implementation */
-// CRBNode *c_rbnode_next_postorder(CRBNode *n)
-// {
-//     ARG_UNUSED(n);
-//     return NULL;
-// }
-
-/* c_rbtree_add implementation */
-// void c_rbtree_add(CRBTree *t, CRBNode *p, CRBNode **l, CRBNode *n)
-// {
-//     ARG_UNUSED(t);
-//     ARG_UNUSED(p);
-//     ARG_UNUSED(l);
-//     ARG_UNUSED(n);
-//     /* Stub implementation - needed by some dbus-broker code */
-// }
-
-/* controller_dbus_dispatch implementation - missing symbol */
-int controller_dbus_dispatch(Controller *controller, Message *message)
-{
-    ARG_UNUSED(controller);
-    ARG_UNUSED(message);
-    return -ENOTSUP;
-}

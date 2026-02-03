@@ -17,6 +17,8 @@
 #include "util/sampler.h"
 #include "util/user.h"
 
+LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
+
 int bus_init(Bus *bus,
              Log *log,
              const char *machine_id,

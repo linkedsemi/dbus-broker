@@ -47,8 +47,9 @@
  * guarantees a >=4-byte alignment on allocations. So hard-code the maximum for
  * it.
  */
-#ifdef __m68k__
-#  define C_RBTREE_MAX_ALIGN (C_MAX(4, alignof(max_align_t)))
+#ifdef __ZEPHYR__
+// #  define C_RBTREE_MAX_ALIGN (C_MAX(4, alignof(max_align_t)))
+#  define C_RBTREE_MAX_ALIGN __alignof__(double)
 #else
 #  define C_RBTREE_MAX_ALIGN (alignof(max_align_t))
 #endif

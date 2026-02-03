@@ -4,12 +4,7 @@
 
 #include <c-list.h>
 #include <c-stdaux.h>
-#include <signal.h>
 #include <stdlib.h>
-#include <sys/epoll.h>
-#include <sys/signalfd.h>
-#include <sys/socket.h>
-#include <sys/types.h>
 #include "broker/broker.h"
 #include "broker/controller.h"
 #include "broker/main.h"
@@ -24,8 +19,32 @@
 #include "util/sockopt.h"
 #include "util/user.h"
 
+#ifdef __ZEPHYR__
+#include <zephyr/kernel.h>
+#include <zephyr/posix/poll.h>
+#include <zephyr/posix/unistd.h>
+#include <zephyr/posix/fcntl.h>
+#include <zephyr/net/socket.h>
+#include <zephyr/posix/sys/socket.h>
+
+/* Global broker pointer for external access */
+Broker *g_broker = NULL;
+#else
+#include <sys/signalfd.h>
+#include <signal.h>
+#include <unistd.h>
+#include <fcntl.h>
+#endif
+
+LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
+
 static int broker_dispatch_signals(DispatchFile *file) {
         Broker *broker = c_container_of(file, Broker, signals_file);
+
+#ifdef __ZEPHYR__
+        // Zephyr 不使用 signals_fd，这个函数不会被调用
+        return DISPATCH_E_EXIT;
+#else
         struct signalfd_siginfo si;
         ssize_t l;
 
@@ -38,13 +57,13 @@ static int broker_dispatch_signals(DispatchFile *file) {
         c_assert(l == sizeof(si));
 
         return DISPATCH_E_EXIT;
+#endif
 }
 
 int broker_new(Broker **brokerp, Log *log, const char *machine_id, int controller_fd, uint64_t max_bytes, uint64_t max_fds, uint64_t max_matches, uint64_t max_objects) {
         _c_cleanup_(broker_freep) Broker *broker = NULL;
         struct ucred ucred;
         socklen_t z;
-        sigset_t sigmask;
         int r;
 
         z = sizeof(ucred);
@@ -64,6 +83,7 @@ int broker_new(Broker **brokerp, Log *log, const char *machine_id, int controlle
         broker->controller = (Controller)CONTROLLER_NULL(broker->controller);
 
         r = bus_init(&broker->bus, broker->log, machine_id, max_bytes, max_fds, max_matches, max_objects);
+
         if (r)
                 return error_fold(r);
 
@@ -108,10 +128,28 @@ int broker_new(Broker **brokerp, Log *log, const char *machine_id, int controlle
                 /* keep `pid_fd == -1` if unavailable */
         }
 
+        LOG_DBG("ucred.pid = %d, ucred.uid = %d, ucred.gid = %d", ucred.pid, ucred.uid, ucred.gid);
+
         r = dispatch_context_init(&broker->dispatcher);
         if (r)
                 return error_fold(r);
 
+#ifdef __ZEPHYR__
+        // Broker termination is taken care in dispatch_context_init via pipe
+        // if (socketpair(AF_UNIX, SOCK_STREAM, 0, terminate_pipe) == -1) {
+        //     return error_origin(-errno);
+        // }
+        
+        // broker->signals_fd = terminate_pipe[0];  // Read end
+
+        // r = dispatch_file_init(&broker->signals_file,
+        //                         &broker->dispatcher,
+        //                         broker_dispatch_signals,
+        //                         broker->signals_fd,
+        //                         POLLIN,  // For Zephyr's poll compatibility
+        //                         0);
+#else
+        sigset_t sigmask;
         sigemptyset(&sigmask);
         sigaddset(&sigmask, SIGTERM);
         sigaddset(&sigmask, SIGINT);
@@ -126,18 +164,28 @@ int broker_new(Broker **brokerp, Log *log, const char *machine_id, int controlle
                                broker->signals_fd,
                                EPOLLIN,
                                0);
+#endif
         if (r)
                 return error_fold(r);
 
+#ifndef __ZEPHYR__
         dispatch_file_select(&broker->signals_file, EPOLLIN);
-
+#endif
         r = controller_init(&broker->controller, broker, controller_fd);
         if (r)
                 return error_fold(r);
 
+#ifdef __ZEPHYR__
+        g_broker = broker;
+#endif
         *brokerp = broker;
         broker = NULL;
         return 0;
+}
+
+// Function to request broker termination (call this from outside)
+void broker_request_terminate(Broker *broker) {
+    dispatch_context_terminate(&broker->dispatcher);
 }
 
 Broker *broker_free(Broker *broker) {
@@ -145,8 +193,10 @@ Broker *broker_free(Broker *broker) {
                 return NULL;
 
         controller_deinit(&broker->controller);
+#ifndef __ZEPHYR__
         dispatch_file_deinit(&broker->signals_file);
         c_close(broker->signals_fd);
+#endif
         dispatch_context_deinit(&broker->dispatcher);
         bus_deinit(&broker->bus);
         free(broker);
@@ -184,40 +234,65 @@ static int broker_log_metrics(Broker *broker) {
 }
 
 int broker_run(Broker *broker) {
-        sigset_t signew, sigold;
-        int r, k;
+#ifdef __ZEPHYR__
+    // In Zephyr, we handle termination through the event loop
+    int r;
+    
+    r = connection_open(&broker->controller.connection);
+    if (r == CONNECTION_E_EOF)
+            return MAIN_EXIT;
+    else if (r)
+            return error_fold(r);
 
-        sigemptyset(&signew);
-        sigaddset(&signew, SIGTERM);
-        sigaddset(&signew, SIGINT);
+    do {
+            r = dispatch_context_dispatch(&broker->dispatcher);
+            
+            if (r == DISPATCH_E_EXIT)
+                    return MAIN_EXIT;
+            else if (r == DISPATCH_E_FAILURE)
+                    return MAIN_FAILED;
+            else
+                    r = error_fold(r);
+    } while (!r);
 
-        sigprocmask(SIG_BLOCK, &signew, &sigold);
+    peer_registry_flush(&broker->bus.peers);
 
-        r = connection_open(&broker->controller.connection);
-        if (r == CONNECTION_E_EOF)
-                return MAIN_EXIT;
-        else if (r)
-                return error_fold(r);
+#else
+    sigset_t signew, sigold;
+    int r, k;
 
-        do {
-                r = dispatch_context_dispatch(&broker->dispatcher);
-                if (r == DISPATCH_E_EXIT)
-                        r = MAIN_EXIT;
-                else if (r == DISPATCH_E_FAILURE)
-                        r = MAIN_FAILED;
-                else
-                        r = error_fold(r);
-        } while (!r);
+    sigemptyset(&signew);
+    sigaddset(&signew, SIGTERM);
+    sigaddset(&signew, SIGINT);
 
-        peer_registry_flush(&broker->bus.peers);
+    sigprocmask(SIG_BLOCK, &signew, &sigold);
 
-        k = broker_log_metrics(broker);
-        if (k)
-                r = error_fold(k);
+    r = connection_open(&broker->controller.connection);
+    if (r == CONNECTION_E_EOF)
+            return MAIN_EXIT;
+    else if (r)
+            return error_fold(r);
 
-        sigprocmask(SIG_SETMASK, &sigold, NULL);
+    do {
+            r = dispatch_context_dispatch(&broker->dispatcher);
+            if (r == DISPATCH_E_EXIT)
+                    r = MAIN_EXIT;
+            else if (r == DISPATCH_E_FAILURE)
+                    r = MAIN_FAILED;
+            else
+                    r = error_fold(r);
+    } while (!r);
 
-        return r;
+    peer_registry_flush(&broker->bus.peers);
+
+    k = broker_log_metrics(broker);
+    if (k)
+            r = error_fold(k);
+
+    sigprocmask(SIG_SETMASK, &sigold, NULL);
+
+#endif
+    return r;
 }
 
 int broker_update_environment(Broker *broker, const char * const *env, size_t n_env) {

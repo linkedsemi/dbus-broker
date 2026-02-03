@@ -16,11 +16,15 @@
 #include "util/log.h"
 #include "util/selinux.h"
 #include "util/string.h"
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER(DBUS_BROKER, LOG_LEVEL_DBG);
 
 bool main_arg_audit = false;
 int main_arg_controller = 3;
 int main_arg_log = -1;
-const char *main_arg_machine_id = NULL;
+// const char *main_arg_machine_id = NULL;
+const char *main_arg_machine_id = "0123456789abcdef0123456789abcdef";
 uint64_t main_arg_max_bytes = 512 * 1024 * 1024;
 uint64_t main_arg_max_fds = 128;
 uint64_t main_arg_max_matches = 16 * 1024;
@@ -271,7 +275,7 @@ static int setup(Log *logp) {
         return 0;
 }
 
-static int run(Log *log) {
+int run(Log *log) {
         _c_cleanup_(broker_freep) Broker *broker = NULL;
         int r;
 
@@ -282,38 +286,39 @@ static int run(Log *log) {
         return error_trace(r);
 }
 
-int main(int argc, char **argv) {
+int broker_main(void) {
+// int main(int argc, char **argv) {
         Log log = LOG_NULL;
         int r;
 
-        r = parse_argv(argc, argv);
-        if (r)
-                goto exit;
+        // r = parse_argv(argc, argv);
+        // if (r)
+        //         goto exit;
 
-        r = setup(&log);
-        if (r)
-                goto exit;
+        // r = setup(&log);
+        // if (r)
+        //         goto exit;
 
-        if (main_arg_audit) {
-                r = util_audit_init_global();
-                if (r) {
-                        r = error_fold(r);
-                        goto exit;
-                }
-        }
+        // if (main_arg_audit) {
+        //         r = util_audit_init_global();
+        //         if (r) {
+        //                 r = error_fold(r);
+        //                 goto exit;
+        //         }
+        // }
 
-        r = bus_selinux_init_global(&log);
-        if (r) {
-                r = error_fold(r);
-                goto exit;
-        }
+        // r = bus_selinux_init_global(&log);
+        // if (r) {
+        //         r = error_fold(r);
+        //         goto exit;
+        // }
 
         r = run(&log);
 
-exit:
-        bus_selinux_deinit_global();
-        util_audit_deinit_global();
-        log_deinit(&log);
+// exit:
+//         bus_selinux_deinit_global();
+//         util_audit_deinit_global();
+//         log_deinit(&log);
 
         r = error_trace(r);
         return (r == 0 || r == MAIN_EXIT) ? 0 : 1;

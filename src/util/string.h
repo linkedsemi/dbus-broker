@@ -21,6 +21,11 @@
 #define _c_unlikely_(x) __builtin_expect(!!(x), 0)
 #endif
 
+/* Add static_assert macro for Zephyr */
+#ifndef static_assert
+#define static_assert(_assertion, _message) _Static_assert(_assertion, _message)
+#endif
+
 /* Forward declare needed functions to avoid circular includes */
 extern void *memset(void *ptr, int value, size_t num);
 extern void *memcpy(void *dest, const void *src, size_t num);

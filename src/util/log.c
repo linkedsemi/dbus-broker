@@ -87,6 +87,15 @@
 #include "util/log.h"
 #include "util/misc.h"
 
+#ifdef __ZEPHYR__
+/* Avoid symbol conflicts with Zephyr's log subsystem */
+#define log_init dbus_broker_log_init
+#define log_init_stderr dbus_broker_log_init_stderr
+#define log_init_journal dbus_broker_log_init_journal
+#define log_init_journal_consume dbus_broker_log_init_journal_consume
+#define log_deinit dbus_broker_log_deinit
+#endif
+
 /* lets retrict log records to 2MiB */
 #define LOG_SIZE_MAX (2ULL * 1024ULL * 1024ULL)
 

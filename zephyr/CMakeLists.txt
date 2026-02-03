@@ -21,6 +21,7 @@ zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/../subprojects/libc
 zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/../subprojects/libcrbtree-3/src)
 zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/../subprojects/libclist-3/src)
 zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/../subprojects/libcdvar-1/src)
+zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/../subprojects/libcutf8-1/src)
 
 # Compilation definitions for Zephyr
 zephyr_library_compile_definitions(
@@ -88,6 +89,7 @@ zephyr_library_sources(
   # Broker core sources
   ${DBUS_BROKER_SOURCE_DIR}/broker/broker.c
   ${DBUS_BROKER_SOURCE_DIR}/broker/controller.c
+  ${DBUS_BROKER_SOURCE_DIR}/broker/controller-dbus.c
   ${DBUS_BROKER_SOURCE_DIR}/broker/main.c
   
   # Zephyr compatibility implementations
@@ -99,6 +101,12 @@ zephyr_library_sources(
 
   # Library sources
   ${CMAKE_CURRENT_LIST_DIR}/../subprojects/libcrbtree-3/src/c-rbtree.c
+  ${CMAKE_CURRENT_LIST_DIR}/../subprojects/libcdvar-1/src/c-dvar.c
+  ${CMAKE_CURRENT_LIST_DIR}/../subprojects/libcdvar-1/src/c-dvar-common.c
+  ${CMAKE_CURRENT_LIST_DIR}/../subprojects/libcdvar-1/src/c-dvar-reader.c
+  ${CMAKE_CURRENT_LIST_DIR}/../subprojects/libcdvar-1/src/c-dvar-writer.c
+  ${CMAKE_CURRENT_LIST_DIR}/../subprojects/libcdvar-1/src/c-dvar-type.c
+  ${CMAKE_CURRENT_LIST_DIR}/../subprojects/libcutf8-1/src/c-utf8.c
 )
 
 # Basic compiler warnings

@@ -49,6 +49,14 @@
 #include "util/dispatch.h"
 #include "util/error.h"
 
+#ifdef __ZEPHYR__
+#include <zephyr/kernel.h>
+#include <zephyr/posix/poll.h>
+#include <zephyr/sys/timeutil.h>
+#else
+#include <sys/epoll.h>
+#endif
+
 /**
  * dispatch_file_init() - initialize dispatch file
  * @file:               dispatch file
@@ -81,32 +89,57 @@ int dispatch_file_init(DispatchFile *file,
                        int fd,
                        uint32_t mask,
                        uint32_t events) {
-        int r;
+#ifdef __ZEPHYR__
+    // Expand arrays if needed.
+    if (ctx->n_fds_used >= ctx->n_fds_allocated) {
+        size_t new_size = ctx->n_fds_allocated ? ctx->n_fds_allocated * 2 : 8;
+        struct pollfd *new_fds = realloc(ctx->fds, new_size * sizeof(struct pollfd));
+        DispatchFile **new_files = realloc(ctx->files, new_size * sizeof(DispatchFile *));
+        
+        if (!new_fds || !new_files) {
+            free(new_fds);
+            free(new_files);
+            return error_origin(-ENOMEM);
+        }
+        ctx->fds = new_fds;
+        ctx->files = new_files;
+        ctx->n_fds_allocated = new_size;
+    }
+    
+    ctx->fds[ctx->n_fds_used].fd = fd;
+    ctx->fds[ctx->n_fds_used].events = mask;
+    ctx->fds[ctx->n_fds_used].revents = events;
+    ctx->files[ctx->n_fds_used] = file;
+    
+    ctx->n_fds_used++;
+#else
+    int r;
 
-        c_assert(!(mask & EPOLLET));
-        c_assert(!(events & ~mask));
+    c_assert(!(mask & EPOLLET));
+    c_assert(!(events & ~mask));
 
-        r = epoll_ctl(ctx->epoll_fd,
-                      EPOLL_CTL_ADD,
-                      fd,
-                      &(struct epoll_event) {
-                                .events = mask | EPOLLET,
-                                .data.ptr = file,
-                      });
-        if (r < 0)
-                return error_origin(-errno);
+    r = epoll_ctl(ctx->epoll_fd,
+                  EPOLL_CTL_ADD,
+                  fd,
+                  &(struct epoll_event) {
+                            .events = mask | EPOLLET,
+                            .data.ptr = file,
+                  });
+    if (r < 0)
+            return error_origin(-errno);
+#endif
 
-        file->context = ctx;
-        file->ready_link = (CList)C_LIST_INIT(file->ready_link);
-        file->fn = fn;
-        file->fd = fd;
-        file->user_mask = 0;
-        file->kernel_mask = mask;
-        file->events = events;
+    file->context = ctx;
+    file->ready_link = (CList)C_LIST_INIT(file->ready_link);
+    file->fn = fn;
+    file->fd = fd;
+    file->user_mask = 0;
+    file->kernel_mask = mask;
+    file->events = events;
 
-        ++file->context->n_files;
+    ++file->context->n_files;
 
-        return 0;
+    return 0;
 }
 
 /**
@@ -122,32 +155,38 @@ int dispatch_file_init(DispatchFile *file,
  * dispatch_file_deinit() *BEFORE* closing the FD.
  */
 void dispatch_file_deinit(DispatchFile *file) {
+    if (file->context) {
+#ifdef __ZEPHYR__
+        // Find and remove from the poll array
+        for (size_t i = 0; i < file->context->n_fds_used; i++) {
+            if (file->context->files[i] == file) {
+                // Move last element to current position to fill gap
+                if (i < file->context->n_fds_used - 1) {
+                    file->context->fds[i] = file->context->fds[file->context->n_fds_used - 1];
+                    file->context->files[i] = file->context->files[file->context->n_fds_used - 1];
+                }
+                file->context->n_fds_used--;
+                
+                // Clear ready link
+                c_list_unlink(&file->ready_link);
+                --file->context->n_files;
+                break;
+            }
+        }
+#else
         int r;
 
-        if (file->context) {
-                /*
-                 * There is no excuse to ever skip EPOLL_CTL_DEL. Epoll
-                 * descriptors are not tied to FDs, but rather combinations of
-                 * file+fd. Only if the file-description (sic) is destroyed, an
-                 * epoll description is removed from the epoll set. Hence, we
-                 * have no way to know whether this FD is the only FD for the
-                 * given file-description. Nor do we know whether the caller
-                 * intends to continue using the FD.
-                 *
-                 * Therefore, we always unconditionally remove FDs from the
-                 * epoll-set, and require it to succeed. If the removal fails,
-                 * you did something wrong and better fix it.
-                 */
-                r = epoll_ctl(file->context->epoll_fd, EPOLL_CTL_DEL, file->fd, NULL);
-                c_assert(r >= 0);
+        r = epoll_ctl(file->context->epoll_fd, EPOLL_CTL_DEL, file->fd, NULL);
+        c_assert(r >= 0);
 
-                --file->context->n_files;
-                c_list_unlink(&file->ready_link);
-        }
+        --file->context->n_files;
+        c_list_unlink(&file->ready_link);
+#endif
+    }
 
-        file->fd = -1;
-        file->fn = NULL;
-        file->context = NULL;
+    file->fd = -1;
+    file->fn = NULL;
+    file->context = NULL;
 }
 
 /**
@@ -217,13 +256,33 @@ void dispatch_file_clear(DispatchFile *file, uint32_t mask) {
  * Return: 0 on success, negative error code on failure.
  */
 int dispatch_context_init(DispatchContext *ctx) {
-        *ctx = (DispatchContext)DISPATCH_CONTEXT_NULL(*ctx);
+    *ctx = (DispatchContext)DISPATCH_CONTEXT_NULL(*ctx);
 
-        ctx->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
-        if (ctx->epoll_fd < 0)
-                return error_origin(-errno);
+#ifdef __ZEPHYR__
+    // Allocate initial space for pollfd structures
+    ctx->fds = calloc(8, sizeof(struct pollfd));
+    ctx->files = calloc(8, sizeof(DispatchFile *));
+    
+    if (!ctx->fds || !ctx->files) {
+        free(ctx->fds);
+        free(ctx->files);
+        return error_origin(-ENOMEM);
+    }
+    ctx->n_fds_allocated = 8;
 
-        return 0;
+    // Initialize termination pipe
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, ctx->terminate_pipe) < 0) {
+        free(ctx->fds);
+        free(ctx->files);
+        return error_origin(-errno);
+    }
+#else
+    ctx->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+    if (ctx->epoll_fd < 0)
+            return error_origin(-errno);
+#endif
+
+    return 0;
 }
 
 /**
@@ -237,10 +296,28 @@ int dispatch_context_init(DispatchContext *ctx) {
  * safe to call this function multiple times.
  */
 void dispatch_context_deinit(DispatchContext *ctx) {
-        c_assert(!ctx->n_files);
-        c_assert(c_list_is_empty(&ctx->ready_list));
+    c_assert(!ctx->n_files);
+    c_assert(c_list_is_empty(&ctx->ready_list));
 
-        ctx->epoll_fd = c_close(ctx->epoll_fd);
+#ifdef __ZEPHYR__
+    free(ctx->fds);
+    free(ctx->files);
+    ctx->fds = NULL;
+    ctx->files = NULL;
+
+    // Close termination pipes
+    if (ctx->terminate_pipe[0] != -1) {
+        close(ctx->terminate_pipe[0]);
+    }
+    if (ctx->terminate_pipe[1] != -1) {
+        close(ctx->terminate_pipe[1]);
+    }
+
+    ctx->n_fds_allocated = 0;
+    ctx->n_fds_used = 0;
+#else
+    ctx->epoll_fd = c_close(ctx->epoll_fd);
+#endif
 }
 
 /**
@@ -259,43 +336,99 @@ void dispatch_context_deinit(DispatchContext *ctx) {
  * Return: 0 on success, negative error code on failure.
  */
 int dispatch_context_poll(DispatchContext *ctx, int timeout) {
-        _c_cleanup_(c_freep) void *buffer = NULL;
-        struct epoll_event *events, *e;
-        DispatchFile *f;
-        size_t n;
-        int r;
-
-        n = ctx->n_files * sizeof(*events);
-        if (n > 128UL * 1024UL) {
-                buffer = malloc(n);
-                if (!buffer)
-                        return error_origin(-ENOMEM);
-
-                events = buffer;
-        } else {
-                events = alloca(n);
+#ifdef __ZEPHYR__
+    // 现在使用 poll 同时监控文件描述符和一个特殊的终止管道
+    // 我们需要扩展数组来包含终止管道
+    
+    // 创建临时数组，添加终止管道
+    size_t total_fds = ctx->n_fds_used + 1;  // +1 for terminate pipe
+    struct pollfd *temp_fds = malloc(total_fds * sizeof(struct pollfd));
+    if (!temp_fds) {
+        return error_origin(-ENOMEM);
+    }
+    
+    // 复制原始的fds
+    for (size_t i = 0; i < ctx->n_fds_used; i++) {
+        temp_fds[i] = ctx->fds[i];
+    }
+    
+    // 添加终止管道
+    // 注意：这里需要在 dispatch_context_init 中初始化一个管道
+    temp_fds[ctx->n_fds_used].fd = ctx->terminate_pipe[0];  // 终止管道的读端
+    temp_fds[ctx->n_fds_used].events = POLLIN;
+    temp_fds[ctx->n_fds_used].revents = 0;
+    
+    int result = poll(temp_fds, total_fds, timeout);
+    if (result < 0) {
+        free(temp_fds);
+        if (errno == EINTR)
+            return 0;
+        return error_origin(-errno);
+    }
+    
+    // 检查是否是终止信号
+    if (temp_fds[ctx->n_fds_used].revents & POLLIN) {
+        // 清空终止管道中的数据
+        char buf[16];
+        ssize_t n = read(temp_fds[ctx->n_fds_used].fd, buf, sizeof(buf));
+        free(temp_fds);
+        if (n < 0) {
+            return error_origin(-errno);
         }
-
-        r = epoll_wait(ctx->epoll_fd, events, ctx->n_files, timeout);
-        if (r < 0) {
-                if (errno == EINTR)
-                        return 0;
-
-                return error_origin(-errno);
+        return DISPATCH_E_EXIT;  // 返回退出状态
+    }
+    
+    // 处理结果并更新文件事件
+    for (size_t i = 0; i < ctx->n_fds_used; i++) {
+        if (temp_fds[i].revents) {
+            DispatchFile *f = ctx->files[i];
+            f->events |= temp_fds[i].revents & f->kernel_mask;
+            if ((f->events & f->user_mask) && !c_list_is_linked(&f->ready_link))
+                c_list_link_tail(&f->context->ready_list, &f->ready_link);
         }
+    }
+    
+    free(temp_fds);
+    
+#else
+    _c_cleanup_(c_freep) void *buffer = NULL;
+    struct epoll_event *events, *e;
+    DispatchFile *f;
+    size_t n;
+    int r;
 
-        while (r > 0) {
-                e = &events[--r];
-                f = e->data.ptr;
+    n = ctx->n_files * sizeof(*events);
+    if (n > 128UL * 1024UL) {
+            buffer = malloc(n);
+            if (!buffer)
+                    return error_origin(-ENOMEM);
 
-                c_assert(f->context == ctx);
+            events = buffer;
+    } else {
+            events = alloca(n);
+    }
 
-                f->events |= e->events & f->kernel_mask;
-                if ((f->events & f->user_mask) && !c_list_is_linked(&f->ready_link))
-                        c_list_link_tail(&f->context->ready_list, &f->ready_link);
-        }
+    r = epoll_wait(ctx->epoll_fd, events, ctx->n_files, timeout);
+    if (r < 0) {
+            if (errno == EINTR)
+                    return 0;
 
-        return 0;
+            return error_origin(-errno);
+    }
+
+    while (r > 0) {
+            e = &events[--r];
+            f = e->data.ptr;
+
+            c_assert(f->context == ctx);
+
+            f->events |= e->events & f->kernel_mask;
+            if ((f->events & f->user_mask) && !c_list_is_linked(&f->ready_link))
+                    c_list_link_tail(&f->context->ready_list, &f->ready_link);
+    }
+
+#endif
+    return 0;
 }
 
 /**
@@ -349,4 +482,21 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
 
         c_assert(c_list_is_empty(&todo));
         return r;
+}
+
+/**
+ * dispatch_context_terminate() - signal termination
+ */
+void dispatch_context_terminate(DispatchContext *ctx) {
+#ifdef __ZEPHYR__
+    // 发送终止信号到管道
+    char byte = 1;
+    write(ctx->terminate_pipe[1], &byte, 1);  // 写入到写端
+#else
+    // On Linux, we might send a signal to interrupt the main loop
+    // This is typically handled by signalfd in the original code
+    // For direct termination, we could use a pipe write or similar
+    // For now, we'll leave it empty as the original signalfd mechanism
+    // handles termination differently
+#endif
 }
