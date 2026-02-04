@@ -26,12 +26,25 @@ static int connection_init(Connection *c,
         *connection = (Connection)CONNECTION_NULL(*connection);
         socket_init(&connection->socket, user, fd);
 
+#ifdef __ZEPHYR__
+        /*
+         * On Zephyr, we start with no pending events. Events are only
+         * set by poll() when they actually occur.
+         */
+        r = dispatch_file_init(&connection->socket_file,
+                               dispatch_ctx,
+                               dispatch_fn,
+                               fd,
+                               EPOLLHUP | EPOLLIN | EPOLLOUT,
+                               0);
+#else
         r = dispatch_file_init(&connection->socket_file,
                                dispatch_ctx,
                                dispatch_fn,
                                fd,
                                EPOLLHUP | EPOLLIN | EPOLLOUT,
                                EPOLLIN | EPOLLOUT);
+#endif
         if (r)
                 return error_fold(r);
 
@@ -241,7 +254,21 @@ int connection_dispatch(Connection *connection, uint32_t events) {
                                 dispatch_file_clear(&connection->socket_file, interest[i]);
                         else if (r == SOCKET_E_LOST_INTEREST)
                                 dispatch_file_deselect(&connection->socket_file, interest[i]);
-                        else if (r != SOCKET_E_PREEMPTED)
+                        else if (r == SOCKET_E_PREEMPTED) {
+#ifdef __ZEPHYR__
+                                /*
+                                 * In Zephyr poll implementation, we need to clear the event
+                                 * when SOCKET_E_PREEMPTED is returned. Unlike Linux epoll which
+                                 * provides fresh events each time, our poll implementation accumulates
+                                 * events if not cleared explicitly.
+                                 *
+                                 * SOCKET_E_PREEMPTED means we successfully read data but there
+                                 * might be more. We clear the event here so that the next
+                                 * poll will check if there's actually more data available.
+                                 */
+                                dispatch_file_clear(&connection->socket_file, interest[i]);
+#endif
+                        } else
                                 return error_fold(r);
                 }
         }

@@ -97,7 +97,7 @@ int dispatch_file_init(DispatchFile *file,
         size_t new_size = ctx->n_fds_allocated ? ctx->n_fds_allocated * 2 : 8;
         struct pollfd *new_fds = realloc(ctx->fds, new_size * sizeof(struct pollfd));
         DispatchFile **new_files = realloc(ctx->files, new_size * sizeof(DispatchFile *));
-        
+
         if (!new_fds || !new_files) {
             free(new_fds);
             free(new_files);
@@ -108,8 +108,6 @@ int dispatch_file_init(DispatchFile *file,
         ctx->n_fds_allocated = new_size;
     }
 
-    ARG_UNUSED(events);
-    
     ctx->fds[ctx->n_fds_used].fd = fd;
     ctx->fds[ctx->n_fds_used].events = mask;
     ctx->fds[ctx->n_fds_used].revents = events;
@@ -347,25 +345,27 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
 #ifdef __ZEPHYR__
     // 现在使用 poll 同时监控文件描述符和一个特殊的终止管道
     // 我们需要扩展数组来包含终止管道
-    
+
     // 创建临时数组，添加终止管道
     size_t total_fds = ctx->n_fds_used + 1;  // +1 for terminate pipe
     struct pollfd *temp_fds = malloc(total_fds * sizeof(struct pollfd));
     if (!temp_fds) {
         return error_origin(-ENOMEM);
     }
-    
-    // 复制原始的fds
+
+    // 复制原始的fds，但根据 user_mask 设置要监听的事件
     for (size_t i = 0; i < ctx->n_fds_used; i++) {
-        temp_fds[i] = ctx->fds[i];
+        temp_fds[i].fd = ctx->fds[i].fd;
+        temp_fds[i].events = ctx->files[i]->user_mask;  // 监听 user_mask 中的事件
+        temp_fds[i].revents = 0;
     }
-    
+
     // 添加终止管道
     // 注意：这里需要在 dispatch_context_init 中初始化一个管道
     temp_fds[ctx->n_fds_used].fd = ctx->terminate_pipe[0];  // 终止管道的读端
     temp_fds[ctx->n_fds_used].events = POLLIN;
     temp_fds[ctx->n_fds_used].revents = 0;
-    
+
     LOG_DBG("dispatch_context_poll: calling poll with %u fds, timeout=%d", total_fds, timeout);
     int result = poll(temp_fds, total_fds, timeout);
     LOG_DBG("dispatch_context_poll: poll returned %d, errno=%d", result, errno);
@@ -401,18 +401,25 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
     }
 
     // 处理结果并更新文件事件
+    // 注意：poll 是电平触发，不同于 epoll 的边沿触发
+    // 对于 poll，revents 表示的是当前状态，而不是边沿事件
+    // 因此我们只关心 user_mask 中请求的事件，并直接用 revents 的对应位来更新
     for (size_t i = 0; i < ctx->n_fds_used; i++) {
+        DispatchFile *f = ctx->files[i];
         if (temp_fds[i].revents) {
-            DispatchFile *f = ctx->files[i];
-            uint32_t new_events = temp_fds[i].revents & f->kernel_mask;
+            // 只保留在 user_mask 中的事件
+            uint32_t new_events = temp_fds[i].revents & f->kernel_mask & f->user_mask;
             LOG_DBG("dispatch_context_poll: fd=%d, revents=0x%x, kernel_mask=0x%x, new_events=0x%x, user_mask=0x%x",
                     temp_fds[i].fd, temp_fds[i].revents, f->kernel_mask, new_events, f->user_mask);
-            f->events |= new_events;
-            if ((f->events & f->user_mask) && !c_list_is_linked(&f->ready_link))
+            f->events = new_events;  // 直接赋值，不累加，因为 poll 是电平触发
+            if (f->events && !c_list_is_linked(&f->ready_link))
                 c_list_link_tail(&f->context->ready_list, &f->ready_link);
+        } else {
+            // 如果poll没有返回事件，清除这个fd的所有旧events
+            f->events = 0;
         }
     }
-    
+
     free(temp_fds);
     
 #else
@@ -496,7 +503,6 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
 
         while ((file = c_list_first_entry(&todo, DispatchFile, ready_link))) {
                 c_list_unlink(&file->ready_link);
-                c_list_link_tail(&ctx->ready_list, &file->ready_link);
 
                 LOG_DBG("dispatch_context_dispatch: calling fn for fd=%d", file->fd);
                 r = file->fn(file);
@@ -504,6 +510,12 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
                 if (error_trace(r)) {
                         c_list_splice(&ctx->ready_list, &todo);
                         break;
+                }
+
+                /* Only re-add to ready_list if there are pending events to handle.
+                 * This prevents endless loops when all events have been cleared. */
+                if (file->events & file->user_mask) {
+                        c_list_link_tail(&ctx->ready_list, &file->ready_link);
                 }
         }
 

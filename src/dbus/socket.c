@@ -539,7 +539,12 @@ static int socket_recvmsg(Socket *socket,
         /* Note: file descriptor passing is not supported on Zephyr */
         LOG_DBG("socket_recvmsg: calling recv on fd=%d", socket->fd);
         l = recv(socket->fd, (char *)buffer + *from, to - *from, MSG_DONTWAIT);
-        LOG_DBG("socket_recvmsg: recv returned %d, errno=%d", l, errno);
+        /* Only print errno if recv failed (errno is undefined on success) */
+        if (l < 0) {
+                LOG_DBG("socket_recvmsg: recv returned %d, errno=%d", l, errno);
+        } else {
+                LOG_DBG("socket_recvmsg: recv returned %d bytes", l);
+        }
         /* Initialize msg_flags since recv() doesn't set it */
         msg.msg_flags = 0;
         n_fds = 0;
