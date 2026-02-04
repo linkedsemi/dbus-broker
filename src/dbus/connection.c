@@ -13,6 +13,8 @@
 #include "util/error.h"
 #include "util/user.h"
 
+LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
+
 static int connection_init(Connection *c,
                            DispatchContext *dispatch_ctx,
                            DispatchFn dispatch_fn,
@@ -185,7 +187,13 @@ int connection_open(Connection *connection) {
                         return error_fold(r);
         }
 
+#ifdef __ZEPHYR__
+        LOG_DBG("connection_open: calling dispatch_file_select");
+#endif
         dispatch_file_select(&connection->socket_file, EPOLLHUP | EPOLLIN);
+#ifdef __ZEPHYR__
+        LOG_DBG("connection_open: dispatch_file_select returned");
+#endif
         return 0;
 }
 
@@ -220,8 +228,14 @@ int connection_dispatch(Connection *connection, uint32_t events) {
         size_t i;
         int r;
 
+#ifdef __ZEPHYR__
+        LOG_DBG("connection_dispatch: events=0x%x", events);
+#endif
         for (i = 0; i < C_ARRAY_SIZE(interest); ++i) {
                 if (events & interest[i]) {
+#ifdef __ZEPHYR__
+                        LOG_DBG("connection_dispatch: dispatching event 0x%x", interest[i]);
+#endif
                         r = socket_dispatch(&connection->socket, interest[i]);
                         if (!r)
                                 dispatch_file_clear(&connection->socket_file, interest[i]);

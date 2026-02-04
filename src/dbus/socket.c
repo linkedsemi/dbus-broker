@@ -19,13 +19,15 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/un.h>
+// #include <sys/un.h>
 #include "dbus/message.h"
 #include "dbus/queue.h"
 #include "dbus/socket.h"
 #include "util/error.h"
 #include "util/fdlist.h"
 #include "util/user.h"
+
+LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
 
 struct SocketBuffer {
         CList link;
@@ -532,6 +534,16 @@ static int socket_recvmsg(Socket *socket,
 
         c_assert(to > *from);
 
+#ifdef __ZEPHYR__
+        /* Zephyr doesn't support recvmsg(), use recv() instead */
+        /* Note: file descriptor passing is not supported on Zephyr */
+        LOG_DBG("socket_recvmsg: calling recv on fd=%d", socket->fd);
+        l = recv(socket->fd, (char *)buffer + *from, to - *from, MSG_DONTWAIT);
+        LOG_DBG("socket_recvmsg: recv returned %d, errno=%d", l, errno);
+        /* Initialize msg_flags since recv() doesn't set it */
+        msg.msg_flags = 0;
+        n_fds = 0;
+#else
         msg = (struct msghdr){
                 .msg_iov = &(struct iovec){
                         .iov_base = (char *)buffer + *from,
@@ -543,6 +555,7 @@ static int socket_recvmsg(Socket *socket,
         };
 
         l = recvmsg(socket->fd, &msg, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
+#endif
         if (_c_unlikely_(!l)) {
                 /*
                  * A 0 return of recvmsg() signals end-of-file. Hence, hangup
@@ -847,7 +860,13 @@ static int socket_dispatch_write(Socket *socket) {
         if (!n_msgs)
                 return SOCKET_E_LOST_INTEREST;
 
+#ifdef __ZEPHYR__
+        LOG_DBG("socket_dispatch_write: calling sendmmsg with %d messages", n_msgs);
+#endif
         n_msgs = sendmmsg(socket->fd, msgs, n_msgs, MSG_DONTWAIT | MSG_NOSIGNAL);
+#ifdef __ZEPHYR__
+        LOG_DBG("socket_dispatch_write: sendmmsg returned %d, errno=%d", n_msgs, errno);
+#endif
         if (n_msgs < 0) {
                 switch (errno) {
                 case EAGAIN:
@@ -947,6 +966,10 @@ static int socket_dispatch_write(Socket *socket) {
 int socket_dispatch(Socket *socket, uint32_t event) {
         int r = SOCKET_E_LOST_INTEREST;
 
+#ifdef __ZEPHYR__
+        LOG_DBG("socket_dispatch: event=0x%x (EPOLLIN=0x%x, EPOLLOUT=0x%x, EPOLLHUP=0x%x)",
+                event, EPOLLIN, EPOLLOUT, EPOLLHUP);
+#endif
         switch (event) {
         case EPOLLIN:
                 r = socket_dispatch_read(socket);

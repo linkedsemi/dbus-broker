@@ -57,6 +57,8 @@
 #include <sys/epoll.h>
 #endif
 
+LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
+
 /**
  * dispatch_file_init() - initialize dispatch file
  * @file:               dispatch file
@@ -105,12 +107,14 @@ int dispatch_file_init(DispatchFile *file,
         ctx->files = new_files;
         ctx->n_fds_allocated = new_size;
     }
+
+    ARG_UNUSED(events);
     
     ctx->fds[ctx->n_fds_used].fd = fd;
     ctx->fds[ctx->n_fds_used].events = mask;
     ctx->fds[ctx->n_fds_used].revents = events;
     ctx->files[ctx->n_fds_used] = file;
-    
+
     ctx->n_fds_used++;
 #else
     int r;
@@ -209,6 +213,10 @@ void dispatch_file_deinit(DispatchFile *file) {
 void dispatch_file_select(DispatchFile *file, uint32_t mask) {
         c_assert(!(mask & ~file->kernel_mask));
 
+#ifdef __ZEPHYR__
+        LOG_DBG("dispatch_file_select: fd=%d, mask=0x%x, kernel_mask=0x%x, events=0x%x, user_mask=0x%x",
+                file->fd, mask, file->kernel_mask, file->events, file->user_mask);
+#endif
         file->user_mask |= mask;
         if ((file->user_mask & file->events) && !c_list_is_linked(&file->ready_link))
                 c_list_link_tail(&file->context->ready_list, &file->ready_link);
@@ -358,14 +366,28 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
     temp_fds[ctx->n_fds_used].events = POLLIN;
     temp_fds[ctx->n_fds_used].revents = 0;
     
+    LOG_DBG("dispatch_context_poll: calling poll with %u fds, timeout=%d", total_fds, timeout);
     int result = poll(temp_fds, total_fds, timeout);
+    LOG_DBG("dispatch_context_poll: poll returned %d, errno=%d", result, errno);
     if (result < 0) {
         free(temp_fds);
         if (errno == EINTR)
             return 0;
+        LOG_DBG("dispatch_context_poll: returning error %d", -errno);
         return error_origin(-errno);
     }
-    
+
+    // 打印每个fd的revents
+    for (size_t i = 0; i < total_fds; i++) {
+        LOG_DBG("dispatch_context_poll: fd[%u].fd=%d, revents=0x%x (POLLIN=%d, POLLOUT=%d, POLLHUP=%d, POLLERR=%d, POLLNVAL=%d)",
+                i, temp_fds[i].fd, temp_fds[i].revents,
+                !!(temp_fds[i].revents & POLLIN),
+                !!(temp_fds[i].revents & POLLOUT),
+                !!(temp_fds[i].revents & POLLHUP),
+                !!(temp_fds[i].revents & POLLERR),
+                !!(temp_fds[i].revents & POLLNVAL));
+    }
+
     // 检查是否是终止信号
     if (temp_fds[ctx->n_fds_used].revents & POLLIN) {
         // 清空终止管道中的数据
@@ -377,12 +399,15 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
         }
         return DISPATCH_E_EXIT;  // 返回退出状态
     }
-    
+
     // 处理结果并更新文件事件
     for (size_t i = 0; i < ctx->n_fds_used; i++) {
         if (temp_fds[i].revents) {
             DispatchFile *f = ctx->files[i];
-            f->events |= temp_fds[i].revents & f->kernel_mask;
+            uint32_t new_events = temp_fds[i].revents & f->kernel_mask;
+            LOG_DBG("dispatch_context_poll: fd=%d, revents=0x%x, kernel_mask=0x%x, new_events=0x%x, user_mask=0x%x",
+                    temp_fds[i].fd, temp_fds[i].revents, f->kernel_mask, new_events, f->user_mask);
+            f->events |= new_events;
             if ((f->events & f->user_mask) && !c_list_is_linked(&f->ready_link))
                 c_list_link_tail(&f->context->ready_list, &f->ready_link);
         }
@@ -473,7 +498,9 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
                 c_list_unlink(&file->ready_link);
                 c_list_link_tail(&ctx->ready_list, &file->ready_link);
 
+                LOG_DBG("dispatch_context_dispatch: calling fn for fd=%d", file->fd);
                 r = file->fn(file);
+                LOG_DBG("dispatch_context_dispatch: fn returned %d", r);
                 if (error_trace(r)) {
                         c_list_splice(&ctx->ready_list, &todo);
                         break;

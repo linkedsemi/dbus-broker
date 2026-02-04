@@ -38,13 +38,14 @@ Broker *g_broker = NULL;
 
 LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
 
-static int broker_dispatch_signals(DispatchFile *file) {
-        Broker *broker = c_container_of(file, Broker, signals_file);
-
+static int __attribute__((unused)) broker_dispatch_signals (DispatchFile *file) {
+        
 #ifdef __ZEPHYR__
         // Zephyr 不使用 signals_fd，这个函数不会被调用
+        ARG_UNUSED(file);
         return DISPATCH_E_EXIT;
 #else
+        Broker *broker = c_container_of(file, Broker, signals_file);
         struct signalfd_siginfo si;
         ssize_t l;
 
@@ -62,14 +63,21 @@ static int broker_dispatch_signals(DispatchFile *file) {
 
 int broker_new(Broker **brokerp, Log *log, const char *machine_id, int controller_fd, uint64_t max_bytes, uint64_t max_fds, uint64_t max_matches, uint64_t max_objects) {
         _c_cleanup_(broker_freep) Broker *broker = NULL;
+        int r;
+#ifdef __ZEPHYR__
+        /* Zephyr doesn't support SO_PEERCRED, use default values */
+        uid_t uid = 0;
+        gid_t gid = 0;
+        pid_t pid = 0;
+#else
         struct ucred ucred;
         socklen_t z;
-        int r;
 
         z = sizeof(ucred);
         r = getsockopt(controller_fd, SOL_SOCKET, SO_PEERCRED, &ucred, &z);
         if (r < 0)
                 return error_origin(-errno);
+#endif
 
         broker = calloc(1, sizeof(*broker));
         if (!broker)
@@ -87,6 +95,19 @@ int broker_new(Broker **brokerp, Log *log, const char *machine_id, int controlle
         if (r)
                 return error_fold(r);
 
+#ifdef __ZEPHYR__
+        /* Zephyr: skip SELinux and peer credential checks */
+        broker->bus.seclabel = strdup("unlabeled");
+        if (!broker->bus.seclabel)
+                return error_origin(-ENOMEM);
+        broker->bus.n_seclabel = strlen(broker->bus.seclabel) + 1;
+        broker->bus.gids = NULL;
+        broker->bus.n_gids = 0;
+        broker->bus.pid = pid;
+        r = user_registry_ref_user(&broker->bus.users, &broker->bus.user, uid);
+        if (r)
+                return error_fold(r);
+#else
         /*
          * We need the seclabel to run the broker for 2 reasons: First, if
          * 'org.freedesktop.DBus' is queried for the seclabel, we need to
@@ -117,6 +138,7 @@ int broker_new(Broker **brokerp, Log *log, const char *machine_id, int controlle
         r = user_registry_ref_user(&broker->bus.users, &broker->bus.user, ucred.uid);
         if (r)
                 return error_fold(r);
+#endif
 
         r = sockopt_get_peerpidfd(controller_fd, &broker->bus.pid_fd);
         if (r) {
@@ -128,7 +150,11 @@ int broker_new(Broker **brokerp, Log *log, const char *machine_id, int controlle
                 /* keep `pid_fd == -1` if unavailable */
         }
 
+#ifdef __ZEPHYR__
+        LOG_DBG("pid = %d, uid = %d, gid = %d", pid, uid, gid);
+#else
         LOG_DBG("ucred.pid = %d, ucred.uid = %d, ucred.gid = %d", ucred.pid, ucred.uid, ucred.gid);
+#endif
 
         r = dispatch_context_init(&broker->dispatcher);
         if (r)
@@ -204,7 +230,7 @@ Broker *broker_free(Broker *broker) {
         return NULL;
 }
 
-static int broker_log_metrics(Broker *broker) {
+static int __attribute__((unused)) broker_log_metrics(Broker *broker) {
         Sampler *sampler = &broker->bus.sampler;
         double stddev;
         int r;
@@ -237,16 +263,20 @@ int broker_run(Broker *broker) {
 #ifdef __ZEPHYR__
     // In Zephyr, we handle termination through the event loop
     int r;
-    
+
+    LOG_DBG("broker_run: calling connection_open");
     r = connection_open(&broker->controller.connection);
+    LOG_DBG("broker_run: connection_open returned %d", r);
     if (r == CONNECTION_E_EOF)
             return MAIN_EXIT;
     else if (r)
             return error_fold(r);
 
     do {
+            LOG_DBG("broker_run: calling dispatch_context_dispatch");
             r = dispatch_context_dispatch(&broker->dispatcher);
-            
+            LOG_DBG("broker_run: dispatch_context_dispatch returned %d", r);
+
             if (r == DISPATCH_E_EXIT)
                     return MAIN_EXIT;
             else if (r == DISPATCH_E_FAILURE)

@@ -7,10 +7,12 @@
 #include <pwd.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <soc.h>
 #include "catalog/catalog-ids.h"
 #include "util/error.h"
 #include "util/log.h"
 #include "util/sockopt.h"
+#include "sys/syslog.h"
 
 int sockopt_get_peersec(int fd, char **labelp, size_t *lenp) {
         _c_cleanup_(c_freep) char *label = NULL;
