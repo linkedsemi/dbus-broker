@@ -267,14 +267,34 @@ int peer_new_with_fd(Peer **peerp,
         socklen_t socklen = sizeof(ucred);
         int r;
 
+#ifdef __ZEPHYR__
+        /*
+         * Zephyr doesn't support SO_PEERCRED. For socketpair connections,
+         * we use default credentials (uid=0, gid=0, pid=1).
+         */
+        ucred.uid = 0;
+        ucred.gid = 0;
+        ucred.pid = 1;
+#else
         r = getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &ucred, &socklen);
         if (r < 0)
                 return error_origin(-errno);
+#endif
 
         r = user_registry_ref_user(&bus->users, &user, ucred.uid);
         if (r)
                 return error_fold(r);
 
+#ifdef __ZEPHYR__
+        /*
+         * Zephyr doesn't support SO_PEERSEC and SO_PEERGROUPS.
+         * Use empty seclabel and empty gid array.
+         */
+        seclabel = NULL;
+        n_seclabel = 0;
+        gids = NULL;
+        n_gids = 0;
+#else
         r = sockopt_get_peersec(fd, &seclabel, &n_seclabel);
         if (r)
                 return error_fold(r);
@@ -282,6 +302,7 @@ int peer_new_with_fd(Peer **peerp,
         r = sockopt_get_peergroups(fd, bus->log, ucred.uid, ucred.gid, &gids, &n_gids);
         if (r)
                 return error_fold(r);
+#endif
 
         r = sockopt_get_peerpidfd(fd, &pid_fd);
         if (r) {

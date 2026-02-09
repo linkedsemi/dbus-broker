@@ -20,6 +20,19 @@ int sockopt_get_peersec(int fd, char **labelp, size_t *lenp) {
         char *l;
         int r;
 
+#ifdef __ZEPHYR__
+        /*
+         * Zephyr doesn't support SO_PEERSEC.
+         * Return an empty label.
+         */
+        label = strdup("");
+        if (!label)
+                return error_origin(-ENOMEM);
+
+        *labelp = label;
+        *lenp = 0;
+        return 0;
+#else
         /*
          * There is no way to know how big a result SO_PEERSEC returns. Hence,
          * we simply keep re-allocating the buffer to the size returned by
@@ -58,6 +71,7 @@ int sockopt_get_peersec(int fd, char **labelp, size_t *lenp) {
         *labelp = l;
         *lenp = strlen(l);
         return 0;
+#endif
 }
 
 static int gid_compare(const void *va, const void *vb) {
@@ -76,6 +90,24 @@ int sockopt_get_peergroups(int fd, Log *log, uid_t uid, gid_t primary_gid, gid_t
         socklen_t socklen;
         int r, n_gids, i, j;
         void *tmp;
+
+#ifdef __ZEPHYR__
+        /*
+         * Zephyr doesn't support SO_PEERGROUPS or getgrouplist.
+         * Return just the primary GID.
+         */
+        if (gidsp) {
+                gids = malloc(sizeof(*gids));
+                if (!gids)
+                        return error_origin(-ENOMEM);
+                gids[0] = primary_gid;
+                *gidsp = gids;
+                gids = NULL;
+        }
+        if (n_gidsp)
+                *n_gidsp = 1;
+        return 0;
+#endif
 
         /*
          * For compatibility to dbus-daemon(1), we need to know the auxiliary
