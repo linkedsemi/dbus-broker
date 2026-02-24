@@ -15,6 +15,8 @@
 #include "util/error.h"
 #include "util/selinux.h"
 
+LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
+
 /* D-Bus type 'a(btbs)' */
 #define POLICY_TYPE_a_btbs              \
         C_DVAR_T_ARRAY(                 \
@@ -459,16 +461,19 @@ PolicyRegistry *policy_registry_free(PolicyRegistry *registry) {
 }
 
 static PolicyRegistryNode *policy_registry_find_uid(PolicyRegistry *registry, uint32_t uid) {
+        LOG_DBG("policy_registry_find_uid: Enter, registry=%p, uid=%u", registry, uid);
         PolicyRegistryNodeIndex index = {
                 .uidgid_start = uid,
                 .uidgid_end = uid,
         };
 
-        return c_rbtree_find_entry(&registry->uid_tree,
+        PolicyRegistryNode *node = c_rbtree_find_entry(&registry->uid_tree,
                                    policy_registry_node_compare,
                                    &index,
                                    PolicyRegistryNode,
                                    registry_node);
+        LOG_DBG("policy_registry_find_uid: Return node=%p", node);
+        return node;
 }
 
 static PolicyRegistryNode *policy_registry_find_gid(PolicyRegistry *registry, uint32_t gid) {
@@ -721,10 +726,40 @@ int policy_snapshot_new(PolicySnapshot **snapshotp,
                         uint32_t uid,
                         const uint32_t *gids,
                         size_t n_gids) {
+
         _c_cleanup_(policy_snapshot_freep) PolicySnapshot *snapshot = NULL;
+        int r;
+
+        LOG_DBG("policy_snapshot_new: Enter, registry=%p, uid=%u, n_gids=%u", registry, uid, n_gids);
+
+        if (!registry) {
+
+                LOG_DBG("NULL registry detected - creating permissive snapshot");
+                /* Create minimal permissive snapshot for Zephyr */
+                snapshot = calloc(1, sizeof(*snapshot));
+                if (!snapshot)
+                return -ENOMEM;
+                
+                /* Create minimal permissive configuration */
+                snapshot->apparmor = NULL;
+                snapshot->selinux = NULL;
+                snapshot->seclabel = strdup("unconfined");  /* Simple fallback */
+                snapshot->n_batches = 0;  /* No batches needed for permissive */
+                
+                if (!snapshot->seclabel) {
+                        free(snapshot);
+                        return -ENOMEM;
+                }
+                
+                *snapshotp = snapshot;
+                LOG_DBG("Created permissive snapshot: %p", snapshot);
+                return 0;
+        }
+        
         PolicyRegistryNode *node;
         size_t n_batches = 1 + n_gids;
 
+        LOG_DBG("policy_snapshot_new: Iterating uid_range_tree");
         c_rbtree_for_each_entry(node, &registry->uid_range_tree, registry_node) {
                 if (node->index.uidgid_start > uid)
                         continue;
@@ -735,26 +770,50 @@ int policy_snapshot_new(PolicySnapshot **snapshotp,
         }
 
         snapshot = calloc(1, sizeof(*snapshot) + n_batches * sizeof(*snapshot->batches));
-        if (!snapshot)
+        if (!snapshot) {
+                LOG_ERR("policy_snapshot_new: calloc failed");
                 return error_origin(-ENOMEM);
+        }
+        LOG_DBG("policy_snapshot_new: snapshot allocated at %p", snapshot);
 
         *snapshot = (PolicySnapshot)POLICY_SNAPSHOT_NULL;
 
+        LOG_DBG("policy_snapshot_new: registry=%p, apparmor=%p, selinux=%p",
+                registry, registry->apparmor, registry->selinux);
+
+        if (!registry) {
+                LOG_ERR("policy_snapshot_new: registry is NULL!");
+                return error_origin(-EINVAL);
+        }
+
+        LOG_DBG("policy_snapshot_new: Calling bus_apparmor_registry_ref");
         snapshot->apparmor = bus_apparmor_registry_ref(registry->apparmor);
+        LOG_DBG("policy_snapshot_new: Calling bus_selinux_registry_ref");
         snapshot->selinux = bus_selinux_registry_ref(registry->selinux);
 
+        LOG_DBG("policy_snapshot_new: Calling strdup for seclabel");
         snapshot->seclabel = strdup(seclabel);
-        if (!snapshot->seclabel)
+        if (!snapshot->seclabel) {
+                LOG_ERR("policy_snapshot_new: strdup failed");
                 return error_origin(-ENOMEM);
+        }
 
         /* fetch matching uid policy */
+        LOG_DBG("policy_snapshot_new: Calling policy_registry_find_uid, snapshot=%p, snapshot->n_batches=%u",
+                snapshot, snapshot->n_batches);
         node = policy_registry_find_uid(registry, uid);
-        if (node)
+        LOG_DBG("policy_snapshot_new: policy_registry_find_uid returned node=%p", node);
+        if (node) {
+                LOG_DBG("policy_snapshot_new: Found uid policy, adding batch at index %u", snapshot->n_batches);
                 snapshot->batches[snapshot->n_batches++] = policy_batch_ref(node->batch);
-        else
+        } else {
+                LOG_DBG("policy_snapshot_new: Using default batch at index %u", snapshot->n_batches);
                 snapshot->batches[snapshot->n_batches++] = policy_batch_ref(registry->default_batch);
+        }
 
         /* fetch all matching uid-range policies */
+        LOG_DBG("policy_snapshot_new: Iterating uid_range_tree for ranges, snapshot=%p, n_batches=%u",
+                snapshot, snapshot->n_batches);
         c_rbtree_for_each_entry(node, &registry->uid_range_tree, registry_node) {
                 if (node->index.uidgid_start > uid)
                         continue;

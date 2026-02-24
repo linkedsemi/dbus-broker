@@ -14,8 +14,22 @@
 #include "util/dispatch.h"
 #include "util/error.h"
 
+LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
+
 static int listener_dispatch(DispatchFile *file) {
+        /* Safety check - verify DispatchFile is valid before dereferencing */
+        if (!file) {
+                LOG_ERR("listener_dispatch: file is NULL!");
+                return -EFAULT;
+        }
+        if (file->fd < 0) {
+                LOG_ERR("listener_dispatch: file->fd is invalid: %d", file->fd);
+                return -EBADF;
+        }
+        // LOG_DBG("listener_dispatch: ENTRY - file=%p, file->fd=%d, file->fn=%p, file->context=%p",
+        //         file, file->fd, file->fn, file->context);
         Listener *listener = c_container_of(file, Listener, socket_file);
+        LOG_DBG("listener_dispatch: listener=%p, listener->socket_fd=%d", listener, listener->socket_fd);
         _c_cleanup_(peer_freep) Peer *peer = NULL;
         _c_cleanup_(c_closep) int fd = -1;
         int r;
@@ -23,6 +37,19 @@ static int listener_dispatch(DispatchFile *file) {
         if (!(dispatch_file_events(file) & EPOLLIN))
                 return 0;
 
+        // LOG_DBG("listener_dispatch: Got POLLIN event, accepting connection");
+#ifdef __ZEPHYR__
+        LOG_DBG("listener_dispatch: Calling zsock_accept on fd=%d", listener->socket_fd);
+        fd = zsock_accept(listener->socket_fd, NULL, NULL);
+        // LOG_DBG("listener_dispatch: zsock_accept returned fd=%d", fd);
+        if (fd < 0) {
+                if (errno == EAGAIN) {
+                        dispatch_file_clear(&listener->socket_file, EPOLLIN);
+                        return 0;
+                }
+                return error_origin(-errno);
+        }
+#else
         fd = accept4(listener->socket_fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
         if (fd < 0) {
                 if (errno == EAGAIN) {
@@ -42,8 +69,11 @@ static int listener_dispatch(DispatchFile *file) {
                         return error_origin(-errno);
                 }
         }
+#endif
 
+        LOG_DBG("listener_dispatch: Calling peer_new_with_fd with fd=%d", fd);
         r = peer_new_with_fd(&peer, listener->bus, listener->policy, listener->guid, file->context, fd);
+        // LOG_DBG("listener_dispatch: peer_new_with_fd returned r=%d", r);
         if (r == PEER_E_QUOTA || r == PEER_E_CONNECTION_REFUSED)
                 /*
                  * The user has too many open connections, or a policy disallows it to

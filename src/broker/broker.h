@@ -31,6 +31,22 @@ struct Broker {
         Controller controller;
 };
 
+/* for Zephyr adaption */
+/* Broker configuration structure */
+typedef struct BrokerConfig {
+        uint64_t max_connections;
+        uint64_t max_services;
+        uint64_t max_match_rules;
+        int log_level;
+        bool enable_monitor;
+        bool skip_authentication;
+        bool use_predefined_fds;
+} BrokerConfig;
+
+/* Forward declaration for sd_bus (from systemd) */
+struct sd_bus;
+typedef struct sd_bus sd_bus;
+
 /* broker */
 
 int broker_new(Broker **brokerp, Log *log, const char *machine_id, int controller_fd, uint64_t max_bytes, uint64_t max_fds, uint64_t max_matches, uint64_t max_objects);
@@ -41,10 +57,20 @@ int broker_update_environment(Broker *broker, const char * const *env, size_t n_
 int broker_reload_config(Broker *broker, User *sender_user, uint64_t sender_id, uint32_t sender_serial);
 void broker_request_terminate(Broker *broker); // call from app to terminate broker
 
+int broker_set_config(Broker *broker, const BrokerConfig *config);
+int broker_set_controller_fd(Broker *broker, int fd);
+sd_bus* broker_get_internal_bus(Broker *broker);
+
 C_DEFINE_CLEANUP(Broker *, broker_free);
 
-/* global broker pointer for Zephyr (for external access) */
 #ifdef __ZEPHYR__
+/* For service registration, expose the controller connection */
+Connection* broker_get_controller_connection(Broker *broker);
+
+/* Request graceful broker termination */
+void broker_request_terminate(Broker *broker);
+
+/* Global broker instance for external access */
 extern Broker *g_broker;
 #endif
 

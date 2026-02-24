@@ -92,9 +92,12 @@ int dispatch_file_init(DispatchFile *file,
                        uint32_t mask,
                        uint32_t events) {
 #ifdef __ZEPHYR__
+    LOG_DBG("dispatch_file_init: Enter, file=%p, ctx=%p, fd=%d, n_fds_used=%u, n_fds_allocated=%u",
+            file, ctx, fd, ctx->n_fds_used, ctx->n_fds_allocated);
     // Expand arrays if needed.
     if (ctx->n_fds_used >= ctx->n_fds_allocated) {
         size_t new_size = ctx->n_fds_allocated ? ctx->n_fds_allocated * 2 : 8;
+        // LOG_DBG("dispatch_file_init: Reallocating arrays, new_size=%u", new_size);
         struct pollfd *new_fds = realloc(ctx->fds, new_size * sizeof(struct pollfd));
         DispatchFile **new_files = realloc(ctx->files, new_size * sizeof(DispatchFile *));
 
@@ -106,12 +109,14 @@ int dispatch_file_init(DispatchFile *file,
         ctx->fds = new_fds;
         ctx->files = new_files;
         ctx->n_fds_allocated = new_size;
+        // LOG_DBG("dispatch_file_init: Reallocated, fds=%p, files=%p", ctx->fds, ctx->files);
     }
 
     ctx->fds[ctx->n_fds_used].fd = fd;
     ctx->fds[ctx->n_fds_used].events = mask;
     ctx->fds[ctx->n_fds_used].revents = events;
     ctx->files[ctx->n_fds_used] = file;
+    // LOG_DBG("dispatch_file_init: Added at index %u: fd=%d, file=%p", ctx->n_fds_used, fd, file);
 
     ctx->n_fds_used++;
 #else
@@ -141,6 +146,7 @@ int dispatch_file_init(DispatchFile *file,
 
     ++file->context->n_files;
 
+    // LOG_DBG("dispatch_file_init: Exit, n_fds_used=%u, n_files=%u", ctx->n_fds_used, ctx->n_files);
     return 0;
 }
 
@@ -212,8 +218,8 @@ void dispatch_file_select(DispatchFile *file, uint32_t mask) {
         c_assert(!(mask & ~file->kernel_mask));
 
 #ifdef __ZEPHYR__
-        LOG_DBG("dispatch_file_select: fd=%d, mask=0x%x, kernel_mask=0x%x, events=0x%x, user_mask=0x%x",
-                file->fd, mask, file->kernel_mask, file->events, file->user_mask);
+        // LOG_DBG("dispatch_file_select: fd=%d, mask=0x%x, kernel_mask=0x%x, events=0x%x, user_mask=0x%x",
+        //         file->fd, mask, file->kernel_mask, file->events, file->user_mask);
 #endif
         file->user_mask |= mask;
         if ((file->user_mask & file->events) && !c_list_is_linked(&file->ready_link))
@@ -343,74 +349,95 @@ void dispatch_context_deinit(DispatchContext *ctx) {
  */
 int dispatch_context_poll(DispatchContext *ctx, int timeout) {
 #ifdef __ZEPHYR__
-    // 现在使用 poll 同时监控文件描述符和一个特殊的终止管道
-    // 我们需要扩展数组来包含终止管道
+    LOG_DBG("dispatch_context_poll: n_fds_used=%u, n_files=%u, n_fds_allocated=%u",
+            ctx->n_fds_used, ctx->n_files, ctx->n_fds_allocated);
 
-    // 创建临时数组，添加终止管道
-    size_t total_fds = ctx->n_fds_used + 1;  // +1 for terminate pipe
+    // 创建临时数组
+    size_t total_fds = ctx->n_fds_used;
     struct pollfd *temp_fds = malloc(total_fds * sizeof(struct pollfd));
-    if (!temp_fds) {
+    DispatchFile **temp_files = malloc(ctx->n_fds_used * sizeof(DispatchFile *));
+    if (!temp_fds || !temp_files) {
+        free(temp_fds);
+        free(temp_files);
         return error_origin(-ENOMEM);
     }
 
-    // 复制原始的fds，但根据 user_mask 设置要监听的事件
+    // 复制原始的fds和files指针，但根据 user_mask 设置要监听的事件
     for (size_t i = 0; i < ctx->n_fds_used; i++) {
+        // LOG_DBG("dispatch_context_poll: Copying fd[%u]: fd=%d, files[%u]=%p, user_mask=0x%x",
+                // i, ctx->fds[i].fd, i, ctx->files[i], ctx->files[i]->user_mask);
+        if (!ctx->files[i]) {
+            LOG_ERR("dispatch_context_poll: files[%u] is NULL!", i);
+            free(temp_fds);
+            free(temp_files);
+            return error_origin(-EFAULT);
+        }
         temp_fds[i].fd = ctx->fds[i].fd;
         temp_fds[i].events = ctx->files[i]->user_mask;  // 监听 user_mask 中的事件
         temp_fds[i].revents = 0;
+        temp_files[i] = ctx->files[i];  // 复制指针
     }
 
-    // 添加终止管道
-    // 注意：这里需要在 dispatch_context_init 中初始化一个管道
-    temp_fds[ctx->n_fds_used].fd = ctx->terminate_pipe[0];  // 终止管道的读端
-    temp_fds[ctx->n_fds_used].events = POLLIN;
-    temp_fds[ctx->n_fds_used].revents = 0;
+    // LOG_DBG("dispatch_context_poll: Calling poll with %u fds, timeout=%d", total_fds, timeout);
+    // for (size_t i = 0; i < total_fds; i++) {
+    //     LOG_DBG("dispatch_context_poll: Before poll - fd[%u]=%d, events=0x%x",
+    //             i, temp_fds[i].fd, temp_fds[i].events);
+    // }
 
-    LOG_DBG("dispatch_context_poll: calling poll with %u fds, timeout=%d", total_fds, timeout);
     int result = poll(temp_fds, total_fds, timeout);
-    LOG_DBG("dispatch_context_poll: poll returned %d, errno=%d", result, errno);
     if (result < 0) {
         free(temp_fds);
+        free(temp_files);
         if (errno == EINTR)
             return 0;
-        LOG_DBG("dispatch_context_poll: returning error %d", -errno);
+        LOG_DBG("dispatch_context_poll: poll error, errno=%d", errno);
         return error_origin(-errno);
     }
 
     // 打印每个fd的revents
-    for (size_t i = 0; i < total_fds; i++) {
-        LOG_DBG("dispatch_context_poll: fd[%u].fd=%d, revents=0x%x (POLLIN=%d, POLLOUT=%d, POLLHUP=%d, POLLERR=%d, POLLNVAL=%d)",
-                i, temp_fds[i].fd, temp_fds[i].revents,
-                !!(temp_fds[i].revents & POLLIN),
-                !!(temp_fds[i].revents & POLLOUT),
-                !!(temp_fds[i].revents & POLLHUP),
-                !!(temp_fds[i].revents & POLLERR),
-                !!(temp_fds[i].revents & POLLNVAL));
-    }
-
-    // 检查是否是终止信号
-    if (temp_fds[ctx->n_fds_used].revents & POLLIN) {
-        // 清空终止管道中的数据
-        char buf[16];
-        ssize_t n = read(temp_fds[ctx->n_fds_used].fd, buf, sizeof(buf));
-        free(temp_fds);
-        if (n < 0) {
-            return error_origin(-errno);
-        }
-        return DISPATCH_E_EXIT;  // 返回退出状态
-    }
+    // for (size_t i = 0; i < total_fds; i++) {
+    //     LOG_DBG("dispatch_context_poll: fd[%u].fd=%d, revents=0x%x (POLLIN=%d, POLLOUT=%d, POLLHUP=%d, POLLERR=%d, POLLNVAL=%d)",
+    //             i, temp_fds[i].fd, temp_fds[i].revents,
+    //             !!(temp_fds[i].revents & POLLIN),
+    //             !!(temp_fds[i].revents & POLLOUT),
+    //             !!(temp_fds[i].revents & POLLHUP),
+    //             !!(temp_fds[i].revents & POLLERR),
+    //             !!(temp_fds[i].revents & POLLNVAL));
+    // }
 
     // 处理结果并更新文件事件
     // 注意：poll 是电平触发，不同于 epoll 的边沿触发
     // 对于 poll，revents 表示的是当前状态，而不是边沿事件
     // 因此我们只关心 user_mask 中请求的事件，并直接用 revents 的对应位来更新
-    for (size_t i = 0; i < ctx->n_fds_used; i++) {
-        DispatchFile *f = ctx->files[i];
+    // LOG_DBG("dispatch_context_poll: Processing events, n_files=%u", ctx->n_files);
+    for (size_t i = 0; i < ctx->n_files; i++) {
+        // LOG_DBG("dispatch_context_poll: Accessing temp_files[%u]=%p", i, temp_files[i]);
+        DispatchFile *f = temp_files[i];
+
+        // 检查 NULL 指针和野指针
+        if (!f || f->fd < 0) {
+            LOG_WRN("dispatch_context_poll: fd[%u] has invalid DispatchFile", i);
+            continue;
+        }
+
+        // 验证 fd 匹配
+        if (temp_fds[i].fd != f->fd) {
+            LOG_ERR("dispatch_context_poll: fd mismatch! temp_fds[%u].fd=%d, files[%u]->fd=%d",
+                    i, temp_fds[i].fd, i, f->fd);
+            continue;  // 跳过不匹配的
+        }
+
+        // 验证 context 指针
+        if (f->context != ctx) {
+            LOG_WRN("dispatch_context_poll: fd[%u] DispatchFile has wrong context", i);
+            continue;
+        }
+
         if (temp_fds[i].revents) {
             // 只保留在 user_mask 中的事件
             uint32_t new_events = temp_fds[i].revents & f->kernel_mask & f->user_mask;
-            LOG_DBG("dispatch_context_poll: fd=%d, revents=0x%x, kernel_mask=0x%x, new_events=0x%x, user_mask=0x%x",
-                    temp_fds[i].fd, temp_fds[i].revents, f->kernel_mask, new_events, f->user_mask);
+            // LOG_DBG("dispatch_context_poll: fd=%d, revents=0x%x, kernel_mask=0x%x, new_events=0x%x, user_mask=0x%x",
+                    // temp_fds[i].fd, temp_fds[i].revents, f->kernel_mask, new_events, f->user_mask);
             f->events = new_events;  // 直接赋值，不累加，因为 poll 是电平触发
             if (f->events && !c_list_is_linked(&f->ready_link))
                 c_list_link_tail(&f->context->ready_list, &f->ready_link);
@@ -421,7 +448,8 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
     }
 
     free(temp_fds);
-    
+    free(temp_files);
+
 #else
     _c_cleanup_(c_freep) void *buffer = NULL;
     struct epoll_event *events, *e;
@@ -501,12 +529,34 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
          */
         c_list_swap(&todo, &ctx->ready_list);
 
+        // LOG_DBG("dispatch_context_dispatch: Starting dispatch loop");
         while ((file = c_list_first_entry(&todo, DispatchFile, ready_link))) {
+                // LOG_DBG("dispatch_context_dispatch: About to dispatch file=%p", file);
+                if (!file) {
+                        LOG_ERR("dispatch_context_dispatch: file is NULL!");
+                        break;
+                }
+                if (file->fd < 0) {
+                        LOG_ERR("dispatch_context_dispatch: file->fd is invalid: %d", file->fd);
+                        c_list_unlink(&file->ready_link);
+                        continue;
+                }
+                if (!file->fn) {
+                        LOG_ERR("dispatch_context_dispatch: file->fn is NULL!");
+                        c_list_unlink(&file->ready_link);
+                        continue;
+                }
+                if (file->context != ctx) {
+                        LOG_ERR("dispatch_context_dispatch: file->context mismatch: file=%p, ctx=%p", file->context, ctx);
+                        c_list_unlink(&file->ready_link);
+                        continue;
+                }
+                // LOG_DBG("dispatch_context_dispatch: file=%p, fd=%d, fn=%p, context=%p, user_mask=0x%x, events=0x%x",
+                //         file, file->fd, file->fn, file->context, file->user_mask, file->events);
                 c_list_unlink(&file->ready_link);
 
-                LOG_DBG("dispatch_context_dispatch: calling fn for fd=%d", file->fd);
+                // LOG_DBG("dispatch_context_dispatch: Calling file->fn(file) at %p", file->fn);
                 r = file->fn(file);
-                LOG_DBG("dispatch_context_dispatch: fn returned %d", r);
                 if (error_trace(r)) {
                         c_list_splice(&ctx->ready_list, &todo);
                         break;

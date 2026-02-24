@@ -24,6 +24,8 @@ static int connection_init(Connection *c,
         int r;
 
         *connection = (Connection)CONNECTION_NULL(*connection);
+        LOG_DBG("connection_init: Enter, connection=%p, dispatch_ctx=%p, dispatch_fn=%p, fd=%d",
+                connection, dispatch_ctx, dispatch_fn, fd);
         socket_init(&connection->socket, user, fd);
 
 #ifdef __ZEPHYR__
@@ -31,12 +33,15 @@ static int connection_init(Connection *c,
          * On Zephyr, we start with no pending events. Events are only
          * set by poll() when they actually occur.
          */
+        // LOG_DBG("connection_init: Calling dispatch_file_init");
         r = dispatch_file_init(&connection->socket_file,
                                dispatch_ctx,
                                dispatch_fn,
                                fd,
                                EPOLLHUP | EPOLLIN | EPOLLOUT,
                                0);
+        LOG_DBG("connection_init: dispatch_file_init returned r=%d, n_fds_used=%u, n_files=%u",
+                r, dispatch_ctx->n_fds_used, dispatch_ctx->n_files);
 #else
         r = dispatch_file_init(&connection->socket_file,
                                dispatch_ctx,
@@ -129,8 +134,21 @@ static int connection_feed_sasl(Connection *connection, const char *input, size_
         c_assert(!connection->server || input);
         c_assert(!connection->authenticated);
 
+#if 0
+//#ifdef __ZEPHYR__
+        if (input && n_input > 0) {
+            LOG_DBG("connection_feed_sasl: input='%.*s', server=%d", (int)n_input, input, connection->server);
+        } else {
+            LOG_DBG("connection_feed_sasl: no input, server=%d", connection->server);
+        }
+#endif
+
         if (connection->server) {
                 r = sasl_server_dispatch(&connection->sasl_server, input, n_input, &output, &n_output);
+#if 0
+// #ifdef __ZEPHYR__
+                LOG_DBG("connection_feed_sasl: sasl_server_dispatch returned r=%d, output_len=%u", r, n_output);
+#endif
                 if (r) {
                         switch (r) {
                         case SASL_E_PROTOCOL_VIOLATION:
@@ -141,6 +159,10 @@ static int connection_feed_sasl(Connection *connection, const char *input, size_
                 }
         } else {
                 r = sasl_client_dispatch(&connection->sasl_client, input, n_input, &output, &n_output);
+#if 0
+// #ifdef __ZEPHYR__
+                LOG_DBG("connection_feed_sasl: sasl_client_dispatch returned r=%d, output_len=%u", r, n_output);
+#endif
                 if (r) {
                         switch (r) {
                         case SASL_E_FAILURE:
@@ -156,6 +178,10 @@ static int connection_feed_sasl(Connection *connection, const char *input, size_
         connection->authenticated = connection->server ?
                                     sasl_server_is_done(&connection->sasl_server) :
                                     sasl_client_is_done(&connection->sasl_client);
+#if 0
+//#ifdef __ZEPHYR__
+        LOG_DBG("connection_feed_sasl: authenticated=%d", connection->authenticated);
+#endif
 
         /*
          * If the SASL exchange triggered an outgoing message, we will queue it
@@ -200,13 +226,7 @@ int connection_open(Connection *connection) {
                         return error_fold(r);
         }
 
-#ifdef __ZEPHYR__
-        LOG_DBG("connection_open: calling dispatch_file_select");
-#endif
         dispatch_file_select(&connection->socket_file, EPOLLHUP | EPOLLIN);
-#ifdef __ZEPHYR__
-        LOG_DBG("connection_open: dispatch_file_select returned");
-#endif
         return 0;
 }
 
@@ -242,12 +262,12 @@ int connection_dispatch(Connection *connection, uint32_t events) {
         int r;
 
 #ifdef __ZEPHYR__
-        LOG_DBG("connection_dispatch: events=0x%x", events);
+        // LOG_DBG("connection_dispatch: events=0x%x", events);
 #endif
         for (i = 0; i < C_ARRAY_SIZE(interest); ++i) {
                 if (events & interest[i]) {
 #ifdef __ZEPHYR__
-                        LOG_DBG("connection_dispatch: dispatching event 0x%x", interest[i]);
+                        // LOG_DBG("connection_dispatch: dispatching event 0x%x", interest[i]);
 #endif
                         r = socket_dispatch(&connection->socket, interest[i]);
                         if (!r)

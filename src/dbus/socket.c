@@ -398,7 +398,14 @@ int socket_dequeue(Socket *socket, Message **messagep) {
                         return error_fold(r);
                 }
 
-                r = message_new_incoming(&message, socket->in.header);
+                /* Copy packed struct to aligned local variable to avoid
+                 * alignment faults on RISC-V */
+                {
+                        MessageHeader header_aligned;
+                        memcpy(&header_aligned, &socket->in.header, sizeof(MessageHeader));
+                        r = message_new_incoming(&message, header_aligned);
+                }
+
                 if (r == MESSAGE_E_CORRUPT_HEADER ||
                     r == MESSAGE_E_TOO_LARGE) {
                         socket_close(socket);
@@ -864,13 +871,27 @@ static int socket_dispatch_write(Socket *socket) {
 
         if (!n_msgs)
                 return SOCKET_E_LOST_INTEREST;
-
-#ifdef __ZEPHYR__
+#if 0
+//#ifdef __ZEPHYR__
         LOG_DBG("socket_dispatch_write: calling sendmmsg with %d messages", n_msgs);
+        for (i = 0; i < n_msgs; i++) {
+                LOG_DBG("socket_dispatch_write: msg[%d]: n_vecs=%u, msg_iov=%p",
+                        i, msgs[i].msg_hdr.msg_iovlen, msgs[i].msg_hdr.msg_iov);
+                if (msgs[i].msg_hdr.msg_iov && msgs[i].msg_hdr.msg_iovlen > 0) {
+                        LOG_DBG("socket_dispatch_write: msg[%d]: iov[0].iov_base=%p, iov_len=%zu",
+                                i, msgs[i].msg_hdr.msg_iov[0].iov_base, msgs[i].msg_hdr.msg_iov[0].iov_len);
+                }
+        }
 #endif
+
         n_msgs = sendmmsg(socket->fd, msgs, n_msgs, MSG_DONTWAIT | MSG_NOSIGNAL);
 #ifdef __ZEPHYR__
-        LOG_DBG("socket_dispatch_write: sendmmsg returned %d, errno=%d", n_msgs, errno);
+        // LOG_DBG("socket_dispatch_write: sendmmsg returned %d, errno=%d", n_msgs, errno);
+        if (n_msgs < 0) {
+                LOG_ERR("socket_dispatch_write: sendmmsg failed: errno=%d (%s)", errno, strerror(errno));
+        } else {
+                LOG_DBG("socket_dispatch_write: sendmmsg succeeded, processing %d messages", n_msgs);
+        }
 #endif
         if (n_msgs < 0) {
                 switch (errno) {
@@ -932,6 +953,9 @@ static int socket_dispatch_write(Socket *socket) {
                 if (i >= n_msgs)
                         break;
 
+#ifdef __ZEPHYR__
+                // LOG_DBG("socket_dispatch_write: msg[%d].msg_len=%u", i, (unsigned int)msgs[i].msg_len);
+#endif
                 if (socket_buffer_consume(buffer, msgs[i].msg_len)) {
                         if (buffer->message && buffer->message->fds) {
                                 c_list_unlink(&buffer->link);
@@ -972,8 +996,8 @@ int socket_dispatch(Socket *socket, uint32_t event) {
         int r = SOCKET_E_LOST_INTEREST;
 
 #ifdef __ZEPHYR__
-        LOG_DBG("socket_dispatch: event=0x%x (EPOLLIN=0x%x, EPOLLOUT=0x%x, EPOLLHUP=0x%x)",
-                event, EPOLLIN, EPOLLOUT, EPOLLHUP);
+        // LOG_DBG("socket_dispatch: event=0x%x (EPOLLIN=0x%x, EPOLLOUT=0x%x, EPOLLHUP=0x%x)",
+        //         event, EPOLLIN, EPOLLOUT, EPOLLHUP);
 #endif
         switch (event) {
         case EPOLLIN:

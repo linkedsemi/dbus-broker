@@ -40,10 +40,23 @@ void sampler_deinit(Sampler *sampler) {
 uint64_t sampler_get_time(Sampler *sampler) {
         struct timespec ts;
         int r;
+        clockid_t id_copy;
 
-        r = clock_gettime(sampler->id, &ts);
+        // printf("DEBUG sampler_get_time: sampler=%p, sampler alignment=%ld\n",
+        //        (void *)sampler, (long)((uintptr_t)sampler % 8));
+        /* Use memcpy to avoid alignment issues with clockid_t */
+        memcpy(&id_copy, &sampler->id, sizeof(clockid_t));
+        // printf("DEBUG sampler_get_time: sampler->id=%d\n", id_copy);
+#ifdef __ZEPHYR__
+        /* On Zephyr, thread CPU time is not supported. Fall back to CLOCK_MONOTONIC. */
+        r = clock_gettime(CLOCK_MONOTONIC, &ts);
+#else
+        r = clock_gettime(id_copy, &ts);
+#endif
+        // printf("DEBUG sampler_get_time: clock_gettime returned %d\n", r);
         c_assert(r >= 0);
 
+        // printf("DEBUG sampler_get_time: ts.tv_sec=%ld, ts.tv_nsec=%ld\n", ts.tv_sec, ts.tv_nsec);
         return ts.tv_sec * UINT64_C(1000000000) + ts.tv_nsec;
 }
 
@@ -82,8 +95,19 @@ void sampler_sample_add(Sampler *sampler, uint64_t timestamp) {
  * a sample is not currently running.
  */
 void sampler_sample_start(Sampler *sampler) {
+        uint64_t time_value;
+
+        // printf("DEBUG sampler_sample_start: ENTRY sampler=%p\n", (void *)sampler);
+        // printf("DEBUG sampler_sample_start: sampler alignment=%ld\n", (long)((uintptr_t)sampler % 8));
+        // printf("DEBUG sampler_sample_start: timestamp=%llu\n", sampler->timestamp);
         c_assert(sampler->timestamp == SAMPLER_TIMESTAMP_INVALID);
-        sampler->timestamp = sampler_get_time(sampler);
+        // printf("DEBUG sampler_sample_start: About to call sampler_get_time\n");
+        time_value = sampler_get_time(sampler);
+        // printf("DEBUG sampler_sample_start: time_value=%llu\n", time_value);
+        // printf("DEBUG sampler_sample_start: About to write timestamp\n");
+        sampler->timestamp = time_value;
+        // printf("DEBUG sampler_sample_start: timestamp=%llu after write\n", sampler->timestamp);
+        // printf("DEBUG sampler_sample_start: ABOUT TO RETURN\n");
 }
 
 /**

@@ -32,6 +32,8 @@
 #include "util/sockopt.h"
 #include "util/user.h"
 
+LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
+
 static int peer_dispatch_connection(Peer *peer, uint32_t events) {
         int r;
 
@@ -59,7 +61,12 @@ static int peer_dispatch_connection(Peer *peer, uint32_t events) {
                                 return PEER_E_QUOTA;
                         } else if (r == CONNECTION_E_SASL_VIOLATION) {
                                 log_append_here(peer->bus->log, LOG_WARNING, 0, DBUS_BROKER_CATALOG_PROTOCOL_VIOLATION);
-                                bus_log_append_sender(peer->bus, peer->id, &peer_names, peer->policy->seclabel);
+                                bus_log_append_sender(peer->bus, peer->id, &peer_names,
+#ifdef __ZEPHYR__
+                                                           NULL);
+#else
+                                                           peer->policy->seclabel);
+#endif
 
                                 r = log_commitf(peer->bus->log, "Peer :1.%llu is being disconnected as it violated the SASL protocol.",
                                                 peer->id);
@@ -69,7 +76,12 @@ static int peer_dispatch_connection(Peer *peer, uint32_t events) {
                                 return PEER_E_PROTOCOL_VIOLATION;
                         } else if (r == CONNECTION_E_UNEXPECTED_FDS) {
                                 log_append_here(peer->bus->log, LOG_WARNING, 0, DBUS_BROKER_CATALOG_PROTOCOL_VIOLATION);
-                                bus_log_append_sender(peer->bus, peer->id, &peer_names, peer->policy->seclabel);
+                                bus_log_append_sender(peer->bus, peer->id, &peer_names,
+#ifdef __ZEPHYR__
+                                                           NULL);
+#else
+                                                           peer->policy->seclabel);
+#endif
 
                                 r = log_commitf(peer->bus->log, "Peer :1.%llu is being disconnected as it attempted to pass file descriptors without negotiating support for it.",
                                                 peer->id);
@@ -90,7 +102,12 @@ static int peer_dispatch_connection(Peer *peer, uint32_t events) {
 
                         if (r == MESSAGE_E_INVALID_HEADER) {
                                 log_append_here(peer->bus->log, LOG_WARNING, 0, DBUS_BROKER_CATALOG_PROTOCOL_VIOLATION);
-                                bus_log_append_sender(peer->bus, peer->id, &peer_names, peer->policy->seclabel);
+                                bus_log_append_sender(peer->bus, peer->id, &peer_names,
+#ifdef __ZEPHYR__
+                                                           NULL);
+#else
+                                                           peer->policy->seclabel);
+#endif
 
                                 r = log_commitf(peer->bus->log, "Peer :1.%llu is being disconnected as it sent a message with an invalid header.",
                                                 peer->id);
@@ -100,7 +117,12 @@ static int peer_dispatch_connection(Peer *peer, uint32_t events) {
                                 return PEER_E_PROTOCOL_VIOLATION;
                         } else if (r == MESSAGE_E_INVALID_BODY) {
                                 log_append_here(peer->bus->log, LOG_WARNING, 0, DBUS_BROKER_CATALOG_PROTOCOL_VIOLATION);
-                                bus_log_append_sender(peer->bus, peer->id, &peer_names, peer->policy->seclabel);
+                                bus_log_append_sender(peer->bus, peer->id, &peer_names,
+#ifdef __ZEPHYR__
+                                                           NULL);
+#else
+                                                           peer->policy->seclabel);
+#endif
 
                                 r = log_commitf(peer->bus->log, "Peer :1.%llu is being disconnected as it sent a message with an invalid body.",
                                                 peer->id);
@@ -110,7 +132,12 @@ static int peer_dispatch_connection(Peer *peer, uint32_t events) {
                                 return PEER_E_PROTOCOL_VIOLATION;
                         } else if (r == MESSAGE_E_MISSING_FDS) {
                                 log_append_here(peer->bus->log, LOG_WARNING, 0, DBUS_BROKER_CATALOG_PROTOCOL_VIOLATION);
-                                bus_log_append_sender(peer->bus, peer->id, &peer_names, peer->policy->seclabel);
+                                bus_log_append_sender(peer->bus, peer->id, &peer_names,
+#ifdef __ZEPHYR__
+                                                           NULL);
+#else
+                                                           peer->policy->seclabel);
+#endif
 
                                 r = log_commitf(peer->bus->log, "Peer :1.%llu is being disconnected as it passed fewer file descriptors than its header declared.",
                                                 peer->id);
@@ -125,8 +152,17 @@ static int peer_dispatch_connection(Peer *peer, uint32_t events) {
 
                 message_stitch_sender(m, peer->id);
 
+                printf("DEBUG peer_dispatch_connection: About to call driver_dispatch\n");
+                printf("DEBUG peer_dispatch_connection: peer=%p, peer alignment=%ld\n",
+                       (void *)peer, (long)((uintptr_t)peer % 8));
+                printf("DEBUG peer_dispatch_connection: &peer->bus=%p, &peer->bus->sampler=%p\n",
+                       (void *)&peer->bus, (void *)&peer->bus->sampler);
                 sampler_sample_start(&peer->bus->sampler);
+                printf("DEBUG peer_dispatch_connection: sampler_sample_start returned\n");
+                printf("DEBUG peer_dispatch_connection: About to call driver_dispatch, r=%p, m=%p\n",
+                       (void *)peer, (void *)m);
                 r = driver_dispatch(peer, m);
+                printf("DEBUG peer_dispatch_connection: driver_dispatch returned %d\n", r);
                 sampler_sample_end(&peer->bus->sampler);
                 if (r) {
                         NameSet peer_names = NAME_SET_INIT_FROM_OWNER(&peer->owned_names);
@@ -256,6 +292,7 @@ int peer_new_with_fd(Peer **peerp,
                      const char guid[],
                      DispatchContext *dispatcher,
                      int fd) {
+        LOG_DBG("peer_new_with_fd: Enter, fd=%d, bus=%p", fd, bus);
         _c_cleanup_(peer_freep) Peer *peer = NULL;
         _c_cleanup_(user_unrefp) User *user = NULL;
         _c_cleanup_(c_freep) gid_t *gids = NULL;
@@ -267,6 +304,8 @@ int peer_new_with_fd(Peer **peerp,
         socklen_t socklen = sizeof(ucred);
         int r;
 
+        // LOG_DBG("peer_new_with_fd: After variable declarations");
+
 #ifdef __ZEPHYR__
         /*
          * Zephyr doesn't support SO_PEERCRED. For socketpair connections,
@@ -275,13 +314,16 @@ int peer_new_with_fd(Peer **peerp,
         ucred.uid = 0;
         ucred.gid = 0;
         ucred.pid = 1;
+        // LOG_DBG("peer_new_with_fd: Set ucred");
 #else
         r = getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &ucred, &socklen);
         if (r < 0)
                 return error_origin(-errno);
 #endif
 
+        LOG_DBG("peer_new_with_fd: Calling user_registry_ref_user, uid=%u", ucred.uid);
         r = user_registry_ref_user(&bus->users, &user, ucred.uid);
+        // LOG_DBG("peer_new_with_fd: user_registry_ref_user returned r=%d, user=%p", r, user);
         if (r)
                 return error_fold(r);
 
@@ -314,10 +356,14 @@ int peer_new_with_fd(Peer **peerp,
                 /* keep `pid_fd == -1` if unavailable */
         }
 
+        // LOG_DBG("peer_new_with_fd: Calling calloc for peer");
         peer = calloc(1, sizeof(*peer));
-        if (!peer)
+        if (!peer) {
+                LOG_ERR("peer_new_with_fd: calloc failed");
                 return error_origin(-ENOMEM);
+        }
         *peer = (Peer)PEER_INIT(*peer);
+        // LOG_DBG("peer_new_with_fd: peer allocated at %p", peer);
 
         peer->bus = bus;
         ++peer->bus->peers.n_peers;
@@ -333,9 +379,11 @@ int peer_new_with_fd(Peer **peerp,
         seclabel = NULL;
         peer->n_seclabel = n_seclabel;
 
+        LOG_DBG("peer_new_with_fd: Calling user_charge");
         r = user_charge(peer->user, &peer->charges[0], NULL, USER_SLOT_BYTES, sizeof(Peer));
         r = r ?: user_charge(peer->user, &peer->charges[1], NULL, USER_SLOT_FDS, 1);
         r = r ?: user_charge(peer->user, &peer->charges[2], NULL, USER_SLOT_OBJECTS, 1);
+        // LOG_DBG("peer_new_with_fd: user_charge returned r=%d", r);
         if (r) {
                 if (r == USER_E_QUOTA)
                         return PEER_E_QUOTA;
@@ -343,12 +391,15 @@ int peer_new_with_fd(Peer **peerp,
                 return error_fold(r);
         }
 
-        r = policy_snapshot_new(&peer->policy, policy, peer->seclabel, ucred.uid, 
 #ifdef __ZEPHYR__
-                                  GID_ARRAY_TO_UINT32_ARRAY(peer->gids, peer->n_gids),
+        /*
+         * Zephyr: Create a permissive policy that allows all operations
+         */
+        peer->policy = NULL; /* Use NULL policy to skip policy checks */
 #else
+        LOG_DBG("peer_new_with_fd: Calling policy_snapshot_new");
+        r = policy_snapshot_new(&peer->policy, policy, peer->seclabel, ucred.uid,
                                   peer->gids,
-#endif
                                   peer->n_gids);
         if (r)
                 return error_fold(r);
@@ -356,13 +407,17 @@ int peer_new_with_fd(Peer **peerp,
         r = policy_snapshot_check_connect(peer->policy);
         if (r)
                 return (r == POLICY_E_ACCESS_DENIED) ? PEER_E_CONNECTION_REFUSED : error_fold(r);
+#endif
 
+        LOG_DBG("peer_new_with_fd: Calling connection_init_server, peer=%p, dispatcher=%p, fd=%d",
+                peer, dispatcher, fd);
         r = connection_init_server(&peer->connection,
                                    dispatcher,
                                    peer_dispatch,
                                    peer->user,
                                    guid,
                                    fd);
+        // LOG_DBG("peer_new_with_fd: connection_init_server returned r=%d", r);
         if (r < 0)
                 return error_fold(r);
 
@@ -448,13 +503,24 @@ bool peer_is_privileged(Peer *peer) {
 int peer_request_name(Peer *peer, const char *name, uint32_t flags, NameChange *change) {
         int r;
 
+        printf("DEBUG peer_request_name: ENTRY peer=%p, peer->user=%p, name=%s, flags=%u\n",
+               peer, peer ? peer->user : NULL, name ? name : "(null)", flags);
+
         if (!strcmp(name, "org.freedesktop.DBus"))
                 return PEER_E_NAME_RESERVED;
 
         if (name[0] == ':')
                 return PEER_E_NAME_UNIQUE;
 
+#ifdef __ZEPHYR__
+        /* Skip policy check on Zephyr when policy is NULL */
+        r = 0;
+#else
+        printf("DEBUG peer_request_name: Before policy_snapshot_check_own, peer->policy=%p\n",
+               peer->policy);
         r = policy_snapshot_check_own(peer->policy, name);
+        printf("DEBUG peer_request_name: policy_snapshot_check_own returned r=%d\n", r);
+#endif
         if (r) {
                 if (r == POLICY_E_ACCESS_DENIED ||
                     r == POLICY_E_SELINUX_ACCESS_DENIED ||
@@ -464,6 +530,8 @@ int peer_request_name(Peer *peer, const char *name, uint32_t flags, NameChange *
                 return error_fold(r);
         }
 
+        printf("DEBUG peer_request_name: Before name_registry_request_name, peer->bus=%p, peer->user=%p\n",
+               peer->bus, peer->user);
         r = name_registry_request_name(&peer->bus->names,
                                        &peer->owned_names,
                                        peer->user,
@@ -794,9 +862,13 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
 
         serial = message_read_serial(message);
 
+        printf("DEBUG peer_queue_unicast: sender_id=%llu, receiver_id=%llu, serial=%u, sender_replies=%p\n",
+               sender_id, receiver->id, serial, (void *)sender_replies);
+
         if (sender_replies && serial) {
                 r = reply_slot_new(&slot, &receiver->replies, sender_replies,
                                    receiver->user, sender_user, sender_id, serial);
+                printf("DEBUG peer_queue_unicast: reply_slot_new returned %d\n", r);
                 if (r == REPLY_E_EXISTS)
                         return PEER_E_EXPECTED_REPLY_EXISTS;
                 else if (r == REPLY_E_QUOTA)
@@ -805,6 +877,23 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
                         return error_fold(r);
         }
 
+#ifdef __ZEPHYR__
+        /* Skip policy check on Zephyr when sender_policy is NULL */
+        if (sender_policy && receiver->policy) {
+                r = policy_snapshot_check_receive(receiver->policy,
+                                                  sender_policy->seclabel,
+                                                  sender_names,
+                                                  sender_id,
+                                                  message->metadata.fields.interface,
+                                                  message->metadata.fields.member,
+                                                  message->metadata.fields.path,
+                                                  message->header->type,
+                                                  false,
+                                                  message->metadata.fields.unix_fds);
+        } else {
+                r = 0;
+        }
+#else
         r = policy_snapshot_check_receive(receiver->policy,
                                           sender_policy->seclabel,
                                           sender_names,
@@ -815,6 +904,7 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
                                           message->header->type,
                                           false,
                                           message->metadata.fields.unix_fds);
+#endif
         if (r) {
                 if (r == POLICY_E_ACCESS_DENIED ||
                     r == POLICY_E_SELINUX_ACCESS_DENIED ||
@@ -837,6 +927,23 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
                 return error_fold(r);
         }
 
+#ifdef __ZEPHYR__
+        /* Skip policy check on Zephyr when sender_policy is NULL */
+        if (sender_policy && receiver->policy) {
+                r = policy_snapshot_check_send(sender_policy,
+                                                   receiver->seclabel,
+                                                   &receiver_names,
+                                                   receiver->id,
+                                                   message->metadata.fields.interface,
+                                                   message->metadata.fields.member,
+                                                   message->metadata.fields.path,
+                                                   message->header->type,
+                                                   false,
+                                                   message->metadata.fields.unix_fds);
+        } else {
+                r = 0;
+        }
+#else
         r = policy_snapshot_check_send(sender_policy,
                                        receiver->seclabel,
                                        &receiver_names,
@@ -847,6 +954,7 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
                                        message->header->type,
                                        false,
                                        message->metadata.fields.unix_fds);
+#endif
         if (r) {
                 if (r == POLICY_E_ACCESS_DENIED ||
                     r == POLICY_E_SELINUX_ACCESS_DENIED ||
@@ -855,7 +963,17 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
                         bus_log_append_policy_send(receiver->bus,
                                                    peer_map_denied_error(r),
                                                    sender_id, receiver->id, sender_names, &receiver_names,
-                                                   sender_policy->seclabel, receiver->policy->seclabel, message);
+#ifdef __ZEPHYR__
+                                                   sender_policy ? sender_policy->seclabel : NULL,
+#else
+                                                   sender_policy->seclabel,
+#endif
+#ifdef __ZEPHYR__
+                                                   receiver->policy ? receiver->policy->seclabel : NULL,
+#else
+                                                   receiver->policy->seclabel,
+#endif
+                                                   message);
                         r = log_commitf(receiver->bus->log, "A security policy denied :1.%llu to send %s %s:%s.%s to %s.",
                                         sender_id,
                                         message->header->type == DBUS_MESSAGE_TYPE_METHOD_CALL ? "method call" : "signal",
@@ -871,7 +989,9 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
         }
 
         r = connection_queue(&receiver->connection, sender_user, message);
+        printf("DEBUG peer_queue_unicast: connection_queue returned %d\n", r);
         if (r) {
+                printf("DEBUG peer_queue_unicast: connection_queue failed, slot will be freed\n");
                 if (r == CONNECTION_E_QUOTA)
                         return PEER_E_QUOTA;
                 else if (r == CONNECTION_E_UNEXPECTED_FDS)
@@ -880,6 +1000,7 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
                 return error_fold(r);
         }
 
+        printf("DEBUG peer_queue_unicast: success, setting slot=NULL\n");
         slot = NULL;
         return 0;
 }
@@ -894,7 +1015,11 @@ int peer_queue_reply(Peer *sender, const char *destination, uint32_t reply_seria
         if (addr.type != ADDRESS_TYPE_ID)
                 return PEER_E_UNEXPECTED_REPLY;
 
+        printf("DEBUG peer_queue_reply: sender_id=%llu, destination=%s, reply_serial=%u\n",
+               sender->id, destination, reply_serial);
+
         slot = reply_slot_get_by_id(&sender->replies, addr.id, reply_serial);
+        printf("DEBUG peer_queue_reply: reply_slot_get_by_id returned %p\n", (void *)slot);
         if (!slot)
                 return PEER_E_UNEXPECTED_REPLY;
 

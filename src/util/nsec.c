@@ -50,6 +50,13 @@ nsec_t nsec_now(clockid_t clock) {
         struct timespec ts;
         int r;
 
+#ifdef __ZEPHYR__
+        /* On Zephyr, thread/process CPU time clocks are not supported.
+         * Fall back to CLOCK_MONOTONIC for any CPU-time based requests. */
+        if (clock == CLOCK_THREAD_CPUTIME_ID || clock == CLOCK_PROCESS_CPUTIME_ID)
+                clock = CLOCK_MONOTONIC;
+#endif
+
         r = clock_gettime(clock, &ts);
         c_assert(r >= 0);
 
@@ -70,6 +77,13 @@ void nsec_sleep(clockid_t clock, nsec_t until) {
         struct timespec ts;
         uint64_t tv_sec, tv_nsec;
         int r;
+
+#ifdef __ZEPHYR__
+        /* On Zephyr, thread/process CPU time clocks are not supported.
+         * Fall back to CLOCK_MONOTONIC for any CPU-time based requests. */
+        if (clock == CLOCK_THREAD_CPUTIME_ID || clock == CLOCK_PROCESS_CPUTIME_ID)
+                clock = CLOCK_MONOTONIC;
+#endif
 
         tv_sec = until / NSEC_PER_SEC;
         tv_nsec = until % NSEC_PER_SEC;
