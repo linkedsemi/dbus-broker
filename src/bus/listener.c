@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
 #include "bus/bus.h"
 #include "bus/listener.h"
 #include "bus/peer.h"
@@ -39,16 +42,85 @@ static int listener_dispatch(DispatchFile *file) {
 
         // LOG_DBG("listener_dispatch: Got POLLIN event, accepting connection");
 #ifdef __ZEPHYR__
-        LOG_DBG("listener_dispatch: Calling zsock_accept on fd=%d", listener->socket_fd);
-        fd = zsock_accept(listener->socket_fd, NULL, NULL);
-        // LOG_DBG("listener_dispatch: zsock_accept returned fd=%d", fd);
-        if (fd < 0) {
-                if (errno == EAGAIN) {
-                        dispatch_file_clear(&listener->socket_file, EPOLLIN);
+        /*
+         * CRITICAL FIX: For Zephyr, we must loop accepting ALL pending connections.
+         * This fixes the issue where multiple clients connect simultaneously:
+         * - Without looping, only first connection is accepted per dispatch cycle
+         * - Subsequent clients may get EALREADY/ETIMEDOUT errors because their
+         *   connections are stuck in the listen backlog
+         *
+         * The solution is to keep accepting connections until EAGAIN/EWOULDBLOCK.
+         */
+        int connections_accepted = 0;
+        int max_connections_per_dispatch = 32; /* Safety limit to prevent infinite loops */
+
+        while (max_connections_per_dispatch-- > 0) {
+                _c_cleanup_(c_closep) int conn_fd = -1;
+                _c_cleanup_(peer_freep) Peer *new_peer = NULL;
+                int accept_r;
+
+                /* Use standard accept() instead of zsock_accept() */
+                conn_fd = accept(listener->socket_fd, NULL, NULL);
+
+                if (conn_fd < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                                /* No more pending connections */
+                                if (connections_accepted == 0) {
+                                        dispatch_file_clear(&listener->socket_file, EPOLLIN);
+                                }
+                                LOG_DBG("listener_dispatch: accept() returned EAGAIN/EWOULDBLOCK (accepted %d connections, loop iteration %d)",
+                                        connections_accepted, 32 - max_connections_per_dispatch);
+                                return 0;
+                        }
+                        LOG_ERR("listener_dispatch: accept failed: %s (errno: %d), accepted %d connections, loop iteration %d",
+                                strerror(errno), errno, connections_accepted, 32 - max_connections_per_dispatch);
                         return 0;
                 }
-                return error_origin(-errno);
+
+                /* Set accepted socket to non-blocking mode */
+                int conn_flags = fcntl(conn_fd, F_GETFL, 0);
+                if (conn_flags < 0) {
+                        LOG_ERR("listener_dispatch: Failed to get socket flags for fd=%d", conn_fd);
+                } else {
+                        fcntl(conn_fd, F_SETFL, conn_flags | O_NONBLOCK);
+                }
+
+                connections_accepted++;
+                LOG_DBG("listener_dispatch: Accepted connection #%d, fd=%d (loop iteration %d)",
+                        connections_accepted, conn_fd, 32 - max_connections_per_dispatch);
+
+                /* Log first 3 connections for debugging */
+                if (connections_accepted <= 3) {
+                        LOG_INF("listener_dispatch: Accepted connection #%d, fd=%d",
+                                connections_accepted, conn_fd);
+                }
+
+                accept_r = peer_new_with_fd(&new_peer, listener->bus, listener->policy,
+                                           listener->guid, file->context, conn_fd);
+                if (accept_r == PEER_E_QUOTA || accept_r == PEER_E_CONNECTION_REFUSED) {
+                        LOG_DBG("listener_dispatch: Connection #%d refused or quota exceeded",
+                                connections_accepted);
+                        continue;
+                } else if (accept_r) {
+                        LOG_ERR("listener_dispatch: peer_new_with_fd failed for connection #%d: %d",
+                                connections_accepted, accept_r);
+                        continue;
+                }
+                conn_fd = -1; /* consume fd */
+
+                c_list_link_tail(&listener->peer_list, &new_peer->listener_link);
+
+                accept_r = peer_spawn(new_peer);
+                if (accept_r) {
+                        LOG_ERR("listener_dispatch: peer_spawn failed for connection #%d: %d",
+                                connections_accepted, accept_r);
+                        continue;
+                }
+
+                new_peer = NULL; /* Successfully handed off */
         }
+
+        return 0;
 #else
         fd = accept4(listener->socket_fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
         if (fd < 0) {
@@ -74,25 +146,40 @@ static int listener_dispatch(DispatchFile *file) {
         LOG_DBG("listener_dispatch: Calling peer_new_with_fd with fd=%d", fd);
         r = peer_new_with_fd(&peer, listener->bus, listener->policy, listener->guid, file->context, fd);
         // LOG_DBG("listener_dispatch: peer_new_with_fd returned r=%d", r);
-        if (r == PEER_E_QUOTA || r == PEER_E_CONNECTION_REFUSED)
+        if (r == PEER_E_QUOTA || r == PEER_E_CONNECTION_REFUSED) {
+                 LOG_DBG("listener_dispatch: Connection refused or quota exceeded");
                 /*
                  * The user has too many open connections, or a policy disallows it to
                  * connect. Simply drop this.
                  */
                 return 0;
-        else if (r)
-                return error_fold(r);
+        } else if (r) {
+                LOG_ERR("listener_dispatch: peer_new_with_fd failed: %d", r);
+                // return error_fold(r);
+                return 0;
+        }
         fd = -1; /* consume fd */
 
         c_list_link_tail(&listener->peer_list, &peer->listener_link);
 
         r = peer_spawn(peer);
-        if (r)
-                return error_fold(r);
+        if (r) {
+                LOG_ERR("listener_dispatch: peer_spawn failed: %d", r);
+                // return error_fold(r);
+                return 0;
+        }
 
         r = peer_dispatch(&peer->connection.socket_file);
         peer = NULL;
-        return error_fold(r);
+
+        if (r) {
+                LOG_ERR("listener_dispatch: peer_dispatch failed: %d", r);
+                /* Continue processing, don't return error */
+                return 0;
+        }
+
+        // return error_fold(r);
+        return 0;
 }
 
 /**
