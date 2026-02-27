@@ -30,8 +30,6 @@
 #include "util/ref.h"
 #include "util/user.h"
 
-LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_INF);
-
 static void user_usage_link(UserUsage *usage, CRBNode *parent, CRBNode **slot) {
         ++usage->user->n_usages;
         c_rbtree_add(&usage->user->usage_tree, parent, slot, &usage->user_node);
@@ -431,25 +429,18 @@ int user_registry_ref_user(UserRegistry *registry, User **userp, uid_t uid) {
         CRBNode **slot, *parent;
         int r;
 
-        // LOG_DBG("user_registry_ref_user: Enter, registry=%p, uid=%u", registry, uid);
         slot = c_rbtree_find_slot(&registry->user_tree, user_compare, &uid, &parent);
-        LOG_DBG("user_registry_ref_user: c_rbtree_find_slot returned slot=%p, parent=%p", slot, parent);
         if (slot) {
-                LOG_DBG("user_registry_ref_user: Creating new user");
                 r = user_new(&user, registry, uid);
-                if (r) {
-                        LOG_ERR("user_registry_ref_user: user_new failed r=%d", r);
+                if (r)
                         return error_trace(r);
-                }
 
                 user_link(user, parent, slot);
         } else {
-                LOG_DBG("user_registry_ref_user: Using existing user");
                 user = c_container_of(parent, User, registry_node);
                 user_ref(user);
         }
 
-        // LOG_DBG("user_registry_ref_user: user=%p", user);
         *userp = user;
         return 0;
 }

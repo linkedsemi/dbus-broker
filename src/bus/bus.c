@@ -17,8 +17,6 @@
 #include "util/sampler.h"
 #include "util/user.h"
 
-LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
-
 int bus_init(Bus *bus,
              Log *log,
              const char *machine_id,
@@ -33,15 +31,13 @@ int bus_init(Bus *bus,
         static_assert(_USER_SLOT_N == C_ARRAY_SIZE(maxima),
                       "User accounting slot mismatch");
 
-        /* if (strlen(machine_id) + 1 != sizeof(bus->machine_id))
-                return error_origin(-EINVAL); */
+        if (strlen(machine_id) + 1 != sizeof(bus->machine_id))
+                return error_origin(-EINVAL);
 
         *bus = (Bus)BUS_NULL(*bus);
         bus->log = log;
 
-        // c_memcpy(bus->machine_id, machine_id, sizeof(bus->machine_id));
-        strncpy(bus->machine_id, machine_id, sizeof(bus->machine_id) - 1);
-        bus->machine_id[sizeof(bus->machine_id) - 1] = '\0';
+        c_memcpy(bus->machine_id, machine_id, sizeof(bus->machine_id));
 
         random = (void *)getauxval(AT_RANDOM);
         c_assert(random);

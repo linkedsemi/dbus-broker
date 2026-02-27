@@ -35,7 +35,7 @@ enum {
 };
 
 struct MessageMetadata {
-        struct __attribute__((packed)) {
+        struct {
                 uint8_t type;
                 uint8_t flags;
                 uint8_t version;
@@ -84,14 +84,14 @@ struct Message {
 
         void *data;
         MessageHeader *header;
-        alignas(8) MessageMetadata metadata;
+        MessageMetadata metadata;
         void *body;
 
         void *original_sender;
-        alignas(8) struct iovec vecs[4];
+        struct iovec vecs[4];
         alignas(8) uint8_t patch[MESSAGE_PATCH_MAX];
         alignas(8) uint8_t extra[];
-} __attribute__((aligned(8)));
+};
 
 #define MESSAGE_INIT(_big_endian) {                     \
                 .n_refs = REF_INIT,                     \
@@ -142,36 +142,14 @@ static inline Message *message_unref(Message *message) {
  * message_read_serial() - XXX
  */
 static inline uint32_t message_read_serial(Message *message) {
-        uint32_t serial;
-        uint8_t type, flags;
-
-        /* Use memcpy to access packed struct members on RISC-V */
-        memcpy(&type, &message->header->type, sizeof(uint8_t));
-        memcpy(&flags, &message->header->flags, sizeof(uint8_t));
-
-        if (type != DBUS_MESSAGE_TYPE_METHOD_CALL ||
-            _c_unlikely_(flags & DBUS_HEADER_FLAG_NO_REPLY_EXPECTED))
+        if (message->header->type != DBUS_MESSAGE_TYPE_METHOD_CALL ||
+            _c_unlikely_(message->header->flags & DBUS_HEADER_FLAG_NO_REPLY_EXPECTED))
                 return 0;
 
-        memcpy(&serial, &message->header->serial, sizeof(uint32_t));
-
         if (_c_likely_(!message->big_endian))
-                return le32toh(serial);
+                return le32toh(message->header->serial);
         else
-                return be32toh(serial);
-}
-
-/* Helper functions to safely access packed MessageHeader members on RISC-V */
-static inline uint8_t message_read_type(Message *message) {
-        uint8_t type;
-        memcpy(&type, &message->header->type, sizeof(uint8_t));
-        return type;
-}
-
-static inline uint8_t message_read_flags(Message *message) {
-        uint8_t flags;
-        memcpy(&flags, &message->header->flags, sizeof(uint8_t));
-        return flags;
+                return be32toh(message->header->serial);
 }
 
 C_DEFINE_CLEANUP(Message *, message_unref);

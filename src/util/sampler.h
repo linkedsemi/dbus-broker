@@ -20,10 +20,10 @@ struct Sampler {
         uint64_t average;
 
         /* internal state */
-        alignas(8) clockid_t id;
+        clockid_t id;
         uint64_t timestamp;
         uint64_t sum_of_squares;
-} __attribute__((aligned(8)));
+};
 
 #define SAMPLER_INIT(_id) {                                     \
                 .minimum = (uint64_t) -1,                       \

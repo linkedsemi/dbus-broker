@@ -67,15 +67,6 @@ struct LogProvenance {
 
 /* log context */
 
-#ifdef __ZEPHYR__
-/* Avoid symbol conflicts with Zephyr's log subsystem */
-#define log_init dbus_broker_log_init
-#define log_init_stderr dbus_broker_log_init_stderr
-#define log_init_journal dbus_broker_log_init_journal
-#define log_init_journal_consume dbus_broker_log_init_journal_consume
-#define log_deinit dbus_broker_log_deinit
-#endif
-
 void log_init(Log *log);
 void log_init_stderr(Log *log, int stderr_fd);
 void log_init_journal(Log *log, int journal_fd);

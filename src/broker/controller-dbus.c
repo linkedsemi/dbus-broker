@@ -17,8 +17,6 @@
 #include "util/error.h"
 #include "util/fdlist.h"
 
-LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
-
 typedef struct ControllerMethod ControllerMethod;
 typedef int (*ControllerMethodFn) (Controller *controller, const char *path, CDVar *var_in, FDList *fds_in, CDVar *var_out);
 
@@ -305,7 +303,6 @@ static int controller_method_add_metrics(Controller *controller, const char *_pa
                 return CONTROLLER_E_UNEXPECTED_PATH;
 
         metrics_fd = fdlist_get(fds, fd_index);
-        LOG_DBG("metrics_fd = %d", metrics_fd);
         if (metrics_fd < 0)
                 return CONTROLLER_E_METRICS_INVALID_FD;
 

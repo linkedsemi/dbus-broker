@@ -32,17 +32,18 @@ struct DispatchFile {
         DispatchContext *context;
         CList ready_link;
         DispatchFn fn;
+
         int fd;
         uint32_t user_mask;
         uint32_t kernel_mask;
         uint32_t events;
 };
 
-#define DISPATCH_FILE_NULL(_fd) { \
+#define DISPATCH_FILE_NULL(_x) {                                \
                 .context = NULL, \
-                .ready_link = C_LIST_INIT((_fd).ready_link), \
+                .ready_link = C_LIST_INIT((_x).ready_link),     \
                 .fn = NULL, \
-                .fd = -1, \
+                .fd = -1,                                       \
                 .user_mask = 0, \
                 .kernel_mask = 0, \
                 .events = 0, \
@@ -61,30 +62,31 @@ void dispatch_file_deselect(DispatchFile *file, uint32_t mask);
 void dispatch_file_clear(DispatchFile *file, uint32_t mask);
 
 /* contexts */
+
 struct DispatchContext {
 #ifdef __ZEPHYR__
-    struct pollfd *fds;
-    DispatchFile **files;
-    size_t n_fds_allocated;
-    size_t n_fds_used;
-    CList ready_list;
-    size_t n_files;
-    int terminate_pipe[2];                  // Pipe for termination notification in poll
+        struct pollfd *fds;
+        DispatchFile **files;
+        size_t n_fds_allocated;
+        size_t n_fds_used;
+        CList ready_list;
+        size_t n_files;
+        int terminate_pipe[2];                  // Pipe for termination notification in poll
 #else
-    int epoll_fd;
-    CList ready_list;
-    size_t n_files;
+        int epoll_fd;
+        CList ready_list;
+        size_t n_files;
 #endif
 };
 
-#define DISPATCH_CONTEXT_NULL(_ctx) { \
-        .n_files = 0, \
-        .ready_list = C_LIST_INIT((_ctx).ready_list), \
-        .n_fds_allocated = 0, \
-        .n_fds_used = 0, \
-        .fds = NULL, \
-        .files = NULL, \
-}
+#define DISPATCH_CONTEXT_NULL(_x) {                             \
+                .n_files = 0, \
+                .ready_list = C_LIST_INIT((_x).ready_list),     \
+                .n_fds_allocated = 0, \
+                .n_fds_used = 0, \
+                .fds = NULL, \
+                .files = NULL, \
+        }
 
 int dispatch_context_init(DispatchContext *ctx);
 void dispatch_context_deinit(DispatchContext *ctx);

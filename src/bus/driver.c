@@ -338,7 +338,6 @@ static const char *driver_error_to_string(int r) {
                 [DRIVER_E_PEER_NOT_PRIVILEGED]                  = "The caller does not have the necessary privileged to call this method",
                 [DRIVER_E_MONITOR_READ_ONLY]                    = "Monitor attempted to send message",
                 [DRIVER_E_UNEXPECTED_FDS]                       = "Peer does not support file descriptor passing.",
-                [DRIVER_E_UNEXPECTED_MESSAGE]                   = "Invalid message",
                 [DRIVER_E_UNEXPECTED_MESSAGE_TYPE]              = "Unexpected message type",
                 [DRIVER_E_UNEXPECTED_PATH]                      = "Invalid object path",
                 [DRIVER_E_UNEXPECTED_INTERFACE]                 = "Invalid interface",
@@ -967,47 +966,16 @@ static int driver_method_request_name(Peer *peer, const char *path, CDVar *in_v,
         uint32_t flags, reply;
         int r;
 
-        printf("DEBUG driver_method_request_name: ENTRY peer=%p, path=%s, in_v=%p, serial=%u\n",
-               peer, path ? path : "(null)", in_v, serial);
-
-        if (!peer) {
-                printf("DEBUG driver_method_request_name: ERROR: peer is NULL\n");
-                return DRIVER_E_UNEXPECTED_MESSAGE;
-        }
-
-        printf("DEBUG driver_method_request_name: peer->bus=%p, peer->user=%p, peer->registered=%d\n",
-               peer->bus, peer->user, peer->registered);
-
-        if (!in_v) {
-                printf("DEBUG driver_method_request_name: ERROR: in_v is NULL\n");
-                return DRIVER_E_UNEXPECTED_MESSAGE;
-        }
-
-        printf("DEBUG driver_method_request_name: About to call c_dvar_read\n");
         c_dvar_read(in_v, "(su)", &name, &flags);
-        printf("DEBUG driver_method_request_name: c_dvar_read completed, name=%s, flags=%u\n",
-               name ? name : "(null)", flags);
 
-        printf("DEBUG driver_method_request_name: About to call driver_end_read\n");
         r = driver_end_read(in_v);
-        printf("DEBUG driver_method_request_name: driver_end_read returned r=%d\n", r);
         if (r)
                 return error_trace(r);
 
-        printf("DEBUG driver_method_request_name: About to call dbus_validate_name\n");
         if (!dbus_validate_name(name, strlen(name)))
                 return DRIVER_E_NAME_INVALID;
-        printf("DEBUG driver_method_request_name: dbus_validate_name completed\n");
 
-        if (!peer->user) {
-                printf("DEBUG driver_method_request_name: ERROR: peer->user is NULL\n");
-                return DRIVER_E_UNEXPECTED_MESSAGE;
-        }
-
-        printf("DEBUG driver_method_request_name: About to call peer_request_name, peer=%p, peer->user=%p, name=%s, flags=%u\n",
-               peer, peer->user, name, flags);
         r = peer_request_name(peer, name, flags, &change);
-        printf("DEBUG driver_method_request_name: peer_request_name returned r=%d\n", r);
         if (!r)
                 reply = DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER;
         else if (r == PEER_E_NAME_ALREADY_OWNER)
@@ -2419,34 +2387,6 @@ static int driver_method_get_all_match_rules(Peer *peer, const char *path, CDVar
 static int driver_handle_method(const DriverMethod *method, Peer *peer, const char *path, uint32_t serial, const char *signature_in, Message *message_in) {
         _c_cleanup_(c_dvar_deinit) CDVar var_in = C_DVAR_INIT, var_out = C_DVAR_INIT;
         int r;
-        uint8_t header_type;
-        uint32_t header_n_body;
-        uint8_t header_end;
-
-        printf("DEBUG driver_handle_method: ENTRY method=%s, path=%s, signature_in=%s\n",
-               method->name ? method->name : "(null)", path ? path : "(null)",
-               signature_in ? signature_in : "(null)");
-        printf("DEBUG driver_handle_method: message_in=%p, message_in->header=%p, message_in->body=%p, message_in->n_body=%zu\n",
-               message_in, message_in->header, message_in->body, message_in->n_body);
-
-        if (!message_in || !message_in->header) {
-                printf("DEBUG driver_handle_method: ERROR: message_in=%p, header=%p\n",
-                       message_in, message_in ? message_in->header : NULL);
-                return DRIVER_E_UNEXPECTED_MESSAGE;
-        }
-
-        /* Access header fields safely with memcpy */
-        memcpy(&header_end, &message_in->header->endian, sizeof(uint8_t));
-        memcpy(&header_type, &message_in->header->type, sizeof(uint8_t));
-        memcpy(&header_n_body, &message_in->header->n_body, sizeof(uint32_t));
-
-        // printf("DEBUG driver_handle_method: header->endian=%d, header->type=%d, header->n_body=%u\n",
-        //        header_end, header_type, header_n_body);
-
-        /* big_endian is a bit-field, access directly */
-        // printf("DEBUG driver_handle_method: message_in->big_endian=%d\n", message_in->big_endian);
-
-        // printf("DEBUG driver_handle_method: method->in=%s, method->out=%s\n", method->in, method->out);
 
         /*
          * Verify the path and the input signature and prepare the
@@ -2456,24 +2396,11 @@ static int driver_handle_method(const DriverMethod *method, Peer *peer, const ch
         if (method->path && strcmp(path, method->path) != 0)
                 return DRIVER_E_UNEXPECTED_PATH;
 
-        // printf("DEBUG driver_handle_method: About to call driver_dvar_verify_signature_in\n");
         r = driver_dvar_verify_signature_in(method->in, signature_in);
         if (r)
                 return error_trace(r);
 
-        printf("DEBUG driver_handle_method: About to call c_dvar_begin_read\n");
-        printf("DEBUG driver_handle_method: message_in->big_endian=%d, method->in=%p, message_in->body=%p, message_in->n_body=%zu\n",
-               message_in->big_endian, method->in, message_in->body, message_in->n_body);
-
-        /* Only check body if the method expects input parameters (not c_dvar_type_unit) */
-        if (method->in && method->in != c_dvar_type_unit && (!message_in->body || message_in->n_body == 0)) {
-                printf("DEBUG driver_handle_method: ERROR: body=%p, n_body=%zu (method expects input)\n",
-                       message_in->body, message_in->n_body);
-                return DRIVER_E_UNEXPECTED_MESSAGE;
-        }
-
         c_dvar_begin_read(&var_in, message_in->big_endian, method->in, 1, message_in->body, message_in->n_body);
-        printf("DEBUG driver_handle_method: About to call c_dvar_begin_write\n");
         c_dvar_begin_write(&var_out, (__BYTE_ORDER == __BIG_ENDIAN), method->out, 1);
 
         /*
@@ -2487,14 +2414,10 @@ static int driver_handle_method(const DriverMethod *method, Peer *peer, const ch
          * programming errors in the broker.
          */
 
-        // printf("DEBUG driver_handle_method: About to call c_dvar_write\n");
         c_dvar_write(&var_out, "(");
-        if (!method->writes_own_header) {
-                // printf("DEBUG driver_handle_method: About to call driver_write_reply_header\n");
+        if (!method->writes_own_header)
                 driver_write_reply_header(&var_out, peer, serial, method->out, /* n_fds= */ 0);
-        }
 
-        // printf("DEBUG driver_handle_method: About to call method->fn\n");
         r = method->fn(peer, path, &var_in, serial, &var_out);
         if (r)
                 return error_trace(r);
@@ -2556,20 +2479,14 @@ static const DriverMethod debug_stats_methods[] = {
 };
 
 static int driver_dispatch_method(Peer *peer, const DriverMethod *methods, uint32_t serial, const char *method, const char *path, const char *signature, Message *message) {
-        printf("DEBUG driver_dispatch_method: method=%s, path=%s, signature=%s\n",
-               method ? method : "(null)", path ? path : "(null)", signature ? signature : "(null)");
         for (size_t i = 0; methods[i].name; i++) {
                 if (strcmp(methods[i].name, method) != 0)
                         continue;
 
-                printf("DEBUG driver_dispatch_method: Found method %s at index %zu\n", methods[i].name, i);
-                if (_c_likely_(peer_is_registered(peer)) || !methods[i].needs_registration) {
-                        printf("DEBUG driver_dispatch_method: Calling driver_handle_method\n");
+                if (_c_likely_(peer_is_registered(peer)) || !methods[i].needs_registration)
                         return driver_handle_method(methods + i, peer, path, serial, signature, message);
-                }
         }
 
-        printf("DEBUG driver_dispatch_method: Unexpected method\n");
         return DRIVER_E_UNEXPECTED_METHOD;
 }
 
@@ -2594,57 +2511,47 @@ static int driver_dispatch_interface(Peer *peer, uint32_t serial, const char *in
                 { "org.freedesktop.DBus.Debug.Stats", debug_stats_methods },
         };
         int r;
-        uint8_t header_type;
-        memcpy(&header_type, &message->header->type, sizeof(header_type));
 
-        printf("DEBUG driver_dispatch_interface: ENTRY interface=%s, member=%s, path=%s\n",
-               interface ? interface : "(null)", member ? member : "(null)", path ? path : "(null)");
-        // printf("DEBUG driver_dispatch_interface: About to check message->header->type\n");
-
-        if (header_type != DBUS_MESSAGE_TYPE_METHOD_CALL)
+        if (message->header->type != DBUS_MESSAGE_TYPE_METHOD_CALL)
                 /* ignore */
                 return 0;
 
         /* Skip policy check for Zephyr - policy operations disabled in peer_new_with_fd */
         r = 0;
-        printf("DEBUG driver_dispatch_interface: Policy check skipped (r=0)\n");
+#if 0
+        r = policy_snapshot_check_send(peer->policy, NULL, NULL, 0, interface, member, path, message->header->type, false, message->metadata.fields.unix_fds);
+        if (r) {
+                if (r == POLICY_E_ACCESS_DENIED ||
+                    r == POLICY_E_SELINUX_ACCESS_DENIED ||
+                    r == POLICY_E_APPARMOR_ACCESS_DENIED) {
+                        NameSet names = NAME_SET_INIT_FROM_OWNER(&peer->owned_names);
 
-        // if (r) {
-        //         if (r == POLICY_E_ACCESS_DENIED ||
-        //             r == POLICY_E_SELINUX_ACCESS_DENIED ||
-        //             r == POLICY_E_APPARMOR_ACCESS_DENIED) {
-        //                 NameSet names = NAME_SET_INIT_FROM_OWNER(&peer->owned_names);
+                        log_append_here(peer->bus->log, LOG_WARNING, 0, NULL);
+                        bus_log_append_policy_send(peer->bus,
+                                                   driver_map_denied_error(r),
+                                                   peer->id, ADDRESS_ID_INVALID, &names, NULL, peer->policy->seclabel, peer->bus->seclabel, message);
+                        r = log_commitf(peer->bus->log, "A security policy denied :1.%llu to send method call %s:%s.%s to org.freedesktop.DBus.",
+                                        peer->id, path, interface, member);
+                        if (r)
+                                return error_fold(r);
 
-        //                 log_append_here(peer->bus->log, LOG_WARNING, 0, NULL);
-        //                 bus_log_append_policy_send(peer->bus,
-        //                                            driver_map_denied_error(r),
-        //                                            peer->id, ADDRESS_ID_INVALID, &names, NULL, peer->policy->seclabel, peer->bus->seclabel, message);
-        //                 r = log_commitf(peer->bus->log, "A security policy denied :1.%llu to send method call %s:%s.%s to org.freedesktop.DBus.",
-        //                                 peer->id, path, interface, member);
-        //                 if (r)
-        //                         return error_fold(r);
+                        return DRIVER_E_SEND_DENIED;
+                }
 
-        //                 return DRIVER_E_SEND_DENIED;
-        //         }
+                return error_fold(r);
+        }
+#endif
 
-        //         return error_fold(r);
-        // }
-
-        // printf("DEBUG driver_dispatch_interface: About to check interface\n");
         if (interface) {
-                printf("DEBUG driver_dispatch_interface: interface=%s\n", interface);
                 for (size_t i = 0; i < C_ARRAY_SIZE(interfaces); ++i) {
-                        // printf("DEBUG driver_dispatch_interface: Comparing with %s\n", interfaces[i].name);
                         if (strcmp(interfaces[i].name, interface) != 0)
                                 continue;
 
-                        printf("DEBUG driver_dispatch_interface: Matched interface %s, calling driver_dispatch_method\n", interfaces[i].name);
                         return error_trace(driver_dispatch_method(peer, interfaces[i].methods, serial, member, path, signature, message));
                 }
 
                 return DRIVER_E_UNEXPECTED_INTERFACE;
         } else {
-                printf("DEBUG driver_dispatch_interface: interface is null\n");
                 for (size_t i = 0; i < C_ARRAY_SIZE(interfaces); ++i) {
                         r = driver_dispatch_method(peer, interfaces[i].methods, serial, member, path, signature, message);
                         if (r == DRIVER_E_UNEXPECTED_METHOD)
@@ -2849,115 +2756,48 @@ static int driver_forward_broadcast(Peer *sender, Message *message) {
 
 static int driver_dispatch_internal(Peer *peer, Message *message) {
         int r;
-        Bus *bus;
-        // Message *msg;
-        // uint32_t serial;
-        // const char *interface_val, *member_val, *path_val, *signature_val;
 
-        // printf("DEBUG driver_dispatch_internal: ENTRY peer=%p, message=%p\n",
-        //        (void *)peer, (void *)message);
-        // printf("DEBUG driver_dispatch_internal: peer->bus=%p\n", (void *)peer->bus);
-
-        /* Copy to local variable to avoid alignment issues */
-        bus = peer->bus;
-        // printf("DEBUG driver_dispatch_internal: bus=%p\n", (void *)bus);
-
-        // msg = message;
-        // printf("DEBUG driver_dispatch_internal: msg=%p\n", (void *)msg);
-
-        // printf("DEBUG driver_dispatch_internal: About to call driver_monitor\n");
-        r = driver_monitor(bus, peer, message);
-        // printf("DEBUG driver_dispatch_internal: driver_monitor returned %d\n", r);
-
-        /* Copy message fields to local vars early to help debugging */
-        // serial = message_read_serial(message);
-        // interface_val = message->metadata.fields.interface;
-        // member_val = message->metadata.fields.member;
-        // path_val = message->metadata.fields.path;
-        // signature_val = message->metadata.fields.signature;
-        // printf("DEBUG driver_dispatch_internal: serial=%u, iface=%s, member=%s, path=%s, sig=%s\n",
-        //        serial,
-        //        interface_val ? interface_val : "(null)",
-        //        member_val ? member_val : "(null)",
-        //        path_val ? path_val : "(null)",
-        //        signature_val ? signature_val : "(null)");
-        if (r) {
-                printf("DEBUG driver_dispatch_internal: Returning due to error\n");
+        r = driver_monitor(peer->bus, peer, message);
+        if (r)
                 return error_trace(r);
+
+        if (_c_unlikely_(message->metadata.header.type == DBUS_MESSAGE_TYPE_METHOD_CALL &&
+                         !message->metadata.fields.destination)) {
+                /*
+                 * The empty destination is treated as a special peer, only implementing the Peer
+                 * interface.
+                 */
+                if (message->metadata.fields.interface &&
+                    strcmp(message->metadata.fields.interface, "org.freedesktop.DBus.Peer") != 0)
+                        return DRIVER_E_UNEXPECTED_METHOD;
+
+                return error_trace(driver_dispatch_method(peer,
+                                                          peer_methods,
+                                                          message_read_serial(message),
+                                                          message->metadata.fields.member,
+                                                          message->metadata.fields.path,
+                                                          message->metadata.fields.signature,
+                                                          message));
         }
 
-        // printf("DEBUG driver_dispatch_internal: About to access message->metadata.header.type\n");
-        printf("DEBUG driver_dispatch_internal: message->metadata.header.type = %d\n",
-               message->metadata.header.type);
-        printf("DEBUG driver_dispatch_internal: message->metadata.fields.destination = %p\n",
-               (void *)message->metadata.fields.destination);
+        if (string_equal(message->metadata.fields.destination, "org.freedesktop.DBus")) {
+                r = driver_dispatch_interface(peer,
+                                              message_read_serial(message),
+                                              message->metadata.fields.interface,
+                                              message->metadata.fields.member,
+                                              message->metadata.fields.path,
+                                              message->metadata.fields.signature,
+                                              message);
+                if (r) {
+                        if (_c_unlikely_(!peer_is_registered(peer)) &&
+                            (r == DRIVER_E_UNEXPECTED_INTERFACE ||
+                             r == DRIVER_E_UNEXPECTED_METHOD))
+                                return DRIVER_E_PEER_NOT_YET_REGISTERED;
 
-        /* Use local variables to avoid alignment issues on RISC-V */
-        {
-                uint8_t type_val;
-                const char *dest_val;
-
-                memcpy(&type_val, &message->metadata.header.type, sizeof(uint8_t));
-                dest_val = message->metadata.fields.destination;
-
-                printf("DEBUG driver_dispatch_internal: type_val=%d, dest_val=%p\n",
-                       type_val, (void *)dest_val);
-
-                // printf("DEBUG driver_dispatch_internal: About to check condition\n");
-                // printf("DEBUG driver_dispatch_internal: type_val == METHOD_CALL = %d\n",
-                //        type_val == DBUS_MESSAGE_TYPE_METHOD_CALL);
-                // printf("DEBUG driver_dispatch_internal: !dest_val = %d\n", (int)!dest_val);
-                // printf("DEBUG driver_dispatch_internal: Condition result = %d\n",
-                //        (type_val == DBUS_MESSAGE_TYPE_METHOD_CALL) && (!dest_val));
-
-                // printf("DEBUG driver_dispatch_internal: About to enter if statement\n");
-                if ((type_val == DBUS_MESSAGE_TYPE_METHOD_CALL) && (!dest_val)) {
-                        // printf("DEBUG driver_dispatch_internal: In unlikely branch\n");
-                        /*
-                         * The empty destination is treated as a special peer, only implementing the Peer
-                         * interface.
-                         */
-                        if (message->metadata.fields.interface &&
-                            strcmp(message->metadata.fields.interface, "org.freedesktop.DBus.Peer") != 0)
-                                return DRIVER_E_UNEXPECTED_METHOD;
-
-                        return error_trace(driver_dispatch_method(peer,
-                                                                  peer_methods,
-                                                                  message_read_serial(message),
-                                                                  message->metadata.fields.member,
-                                                                  message->metadata.fields.path,
-                                                                  message->metadata.fields.signature,
-                                                                  message));
+                        return error_trace(r);
                 }
 
-                // printf("DEBUG driver_dispatch_internal: After first if, before second if\n");
-        }
-
-        // printf("DEBUG driver_dispatch_internal: About to call string_equal\n");
-        {
-                const char *dest_copy = message->metadata.fields.destination;
-                printf("DEBUG driver_dispatch_internal: dest_copy = %p, dest_copy = %s\n",
-                       (void *)dest_copy, dest_copy ? dest_copy : "(null)");
-                if (string_equal(dest_copy, "org.freedesktop.DBus")) {
-                        printf("DEBUG driver_dispatch_internal: Destination is org.freedesktop.DBus\n");
-                        r = driver_dispatch_interface(peer,
-                                                      message_read_serial(message),
-                                                      message->metadata.fields.interface,
-                                                      message->metadata.fields.member,
-                                                      message->metadata.fields.path,
-                                                      message->metadata.fields.signature,
-                                                      message);
-                        if (r) {
-                                if (_c_unlikely_(!peer_is_registered(peer)) &&
-                                    (r == DRIVER_E_UNEXPECTED_INTERFACE ||
-                                     r == DRIVER_E_UNEXPECTED_METHOD))
-                                        return DRIVER_E_PEER_NOT_YET_REGISTERED;
-
-                                return error_trace(r);
-                        }
-
-                        return 0;
-                }
+                return 0;
         }
 
         if (!peer_is_registered(peer))
@@ -2998,28 +2838,11 @@ static int driver_dispatch_internal(Peer *peer, Message *message) {
 
 int driver_dispatch(Peer *peer, Message *message) {
         int r;
-        bool monitor_value;
 
-        printf("DEBUG driver_dispatch: ENTRY peer=%p, message=%p\n", (void *)peer, (void *)message);
-        printf("DEBUG driver_dispatch: peer alignment=%ld, message alignment=%ld\n",
-               (long)((uintptr_t)peer % 8), (long)((uintptr_t)message % 8));
-
-        // printf("DEBUG driver_dispatch: About to access peer->registered\n");
-        printf("DEBUG driver_dispatch: peer->registered = %d\n", peer->registered);
-
-        // printf("DEBUG driver_dispatch: About to access peer->monitor\n");
-        monitor_value = peer->monitor;
-        printf("DEBUG driver_dispatch: peer->monitor = %d\n", monitor_value);
-
-        if (monitor_value) {
-                printf("DEBUG driver_dispatch: returning MONITOR_READ_ONLY\n");
+        if (peer_is_monitor(peer))
                 return DRIVER_E_MONITOR_READ_ONLY;
-        }
 
-        // printf("DEBUG driver_dispatch: About to call driver_dispatch_internal\n");
         r = driver_dispatch_internal(peer, message);
-        printf("DEBUG driver_dispatch: driver_dispatch_internal returned %d\n", r);
-
         switch (r) {
         case DRIVER_E_PEER_NOT_REGISTERED:
                 return r;
@@ -3030,7 +2853,6 @@ int driver_dispatch(Peer *peer, Message *message) {
                 break;
         case DRIVER_E_PEER_NOT_YET_REGISTERED:
         case DRIVER_E_UNEXPECTED_PATH:
-        case DRIVER_E_UNEXPECTED_MESSAGE:
         case DRIVER_E_UNEXPECTED_MESSAGE_TYPE:
         case DRIVER_E_UNEXPECTED_REPLY:
         case DRIVER_E_UNEXPECTED_ENVIRONMENT_UPDATE:

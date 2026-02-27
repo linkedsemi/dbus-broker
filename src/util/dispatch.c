@@ -92,62 +92,56 @@ int dispatch_file_init(DispatchFile *file,
                        uint32_t mask,
                        uint32_t events) {
 #ifdef __ZEPHYR__
-    LOG_DBG("dispatch_file_init: Enter, file=%p, ctx=%p, fd=%d, n_fds_used=%u, n_fds_allocated=%u",
-            file, ctx, fd, ctx->n_fds_used, ctx->n_fds_allocated);
-    // Expand arrays if needed.
-    if (ctx->n_fds_used >= ctx->n_fds_allocated) {
-        size_t new_size = ctx->n_fds_allocated ? ctx->n_fds_allocated * 2 : 8;
-        // LOG_DBG("dispatch_file_init: Reallocating arrays, new_size=%u", new_size);
-        struct pollfd *new_fds = realloc(ctx->fds, new_size * sizeof(struct pollfd));
-        DispatchFile **new_files = realloc(ctx->files, new_size * sizeof(DispatchFile *));
+        // Expand arrays if needed.
+        if (ctx->n_fds_used >= ctx->n_fds_allocated) {
+            size_t new_size = ctx->n_fds_allocated ? ctx->n_fds_allocated * 2 : 8;
+            struct pollfd *new_fds = realloc(ctx->fds, new_size * sizeof(struct pollfd));
+            DispatchFile **new_files = realloc(ctx->files, new_size * sizeof(DispatchFile *));
 
-        if (!new_fds || !new_files) {
-            free(new_fds);
-            free(new_files);
-            return error_origin(-ENOMEM);
+            if (!new_fds || !new_files) {
+                free(new_fds);
+                free(new_files);
+                return error_origin(-ENOMEM);
+            }
+            ctx->fds = new_fds;
+            ctx->files = new_files;
+            ctx->n_fds_allocated = new_size;
         }
-        ctx->fds = new_fds;
-        ctx->files = new_files;
-        ctx->n_fds_allocated = new_size;
-        // LOG_DBG("dispatch_file_init: Reallocated, fds=%p, files=%p", ctx->fds, ctx->files);
-    }
 
-    ctx->fds[ctx->n_fds_used].fd = fd;
-    ctx->fds[ctx->n_fds_used].events = mask;
-    ctx->fds[ctx->n_fds_used].revents = events;
-    ctx->files[ctx->n_fds_used] = file;
-    // LOG_DBG("dispatch_file_init: Added at index %u: fd=%d, file=%p", ctx->n_fds_used, fd, file);
+        ctx->fds[ctx->n_fds_used].fd = fd;
+        ctx->fds[ctx->n_fds_used].events = mask;
+        ctx->fds[ctx->n_fds_used].revents = events;
+        ctx->files[ctx->n_fds_used] = file;
 
-    ctx->n_fds_used++;
+        ctx->n_fds_used++;
 #else
-    int r;
+        int r;
 
-    c_assert(!(mask & EPOLLET));
-    c_assert(!(events & ~mask));
+        c_assert(!(mask & EPOLLET));
+        c_assert(!(events & ~mask));
 
-    r = epoll_ctl(ctx->epoll_fd,
-                  EPOLL_CTL_ADD,
-                  fd,
-                  &(struct epoll_event) {
-                            .events = mask | EPOLLET,
-                            .data.ptr = file,
-                  });
-    if (r < 0)
-            return error_origin(-errno);
+        r = epoll_ctl(ctx->epoll_fd,
+                      EPOLL_CTL_ADD,
+                      fd,
+                      &(struct epoll_event) {
+                                .events = mask | EPOLLET,
+                                .data.ptr = file,
+                      });
+        if (r < 0)
+                return error_origin(-errno);
 #endif
 
-    file->context = ctx;
-    file->ready_link = (CList)C_LIST_INIT(file->ready_link);
-    file->fn = fn;
-    file->fd = fd;
-    file->user_mask = 0;
-    file->kernel_mask = mask;
-    file->events = events;
+        file->context = ctx;
+        file->ready_link = (CList)C_LIST_INIT(file->ready_link);
+        file->fn = fn;
+        file->fd = fd;
+        file->user_mask = 0;
+        file->kernel_mask = mask;
+        file->events = events;
 
-    ++file->context->n_files;
+        ++file->context->n_files;
 
-    // LOG_DBG("dispatch_file_init: Exit, n_fds_used=%u, n_files=%u", ctx->n_fds_used, ctx->n_files);
-    return 0;
+        return 0;
 }
 
 /**
@@ -163,38 +157,38 @@ int dispatch_file_init(DispatchFile *file,
  * dispatch_file_deinit() *BEFORE* closing the FD.
  */
 void dispatch_file_deinit(DispatchFile *file) {
-    if (file->context) {
+        if (file->context) {
 #ifdef __ZEPHYR__
-        // Find and remove from the poll array
-        for (size_t i = 0; i < file->context->n_fds_used; i++) {
-            if (file->context->files[i] == file) {
-                // Move last element to current position to fill gap
-                if (i < file->context->n_fds_used - 1) {
-                    file->context->fds[i] = file->context->fds[file->context->n_fds_used - 1];
-                    file->context->files[i] = file->context->files[file->context->n_fds_used - 1];
+                // Find and remove from the poll array
+                for (size_t i = 0; i < file->context->n_fds_used; i++) {
+                    if (file->context->files[i] == file) {
+                        // Move last element to current position to fill gap
+                        if (i < file->context->n_fds_used - 1) {
+                            file->context->fds[i] = file->context->fds[file->context->n_fds_used - 1];
+                            file->context->files[i] = file->context->files[file->context->n_fds_used - 1];
+                        }
+                        file->context->n_fds_used--;
+                        
+                        // Clear ready link
+                        c_list_unlink(&file->ready_link);
+                        --file->context->n_files;
+                        break;
+                    }
                 }
-                file->context->n_fds_used--;
-                
-                // Clear ready link
-                c_list_unlink(&file->ready_link);
-                --file->context->n_files;
-                break;
-            }
-        }
 #else
-        int r;
+                int r;
 
-        r = epoll_ctl(file->context->epoll_fd, EPOLL_CTL_DEL, file->fd, NULL);
-        c_assert(r >= 0);
+                r = epoll_ctl(file->context->epoll_fd, EPOLL_CTL_DEL, file->fd, NULL);
+                c_assert(r >= 0);
 
-        --file->context->n_files;
-        c_list_unlink(&file->ready_link);
+                --file->context->n_files;
+                c_list_unlink(&file->ready_link);
 #endif
-    }
+        }
 
-    file->fd = -1;
-    file->fn = NULL;
-    file->context = NULL;
+        file->fd = -1;
+        file->fn = NULL;
+        file->context = NULL;
 }
 
 /**
@@ -217,10 +211,6 @@ void dispatch_file_deinit(DispatchFile *file) {
 void dispatch_file_select(DispatchFile *file, uint32_t mask) {
         c_assert(!(mask & ~file->kernel_mask));
 
-#ifdef __ZEPHYR__
-        // LOG_DBG("dispatch_file_select: fd=%d, mask=0x%x, kernel_mask=0x%x, events=0x%x, user_mask=0x%x",
-        //         file->fd, mask, file->kernel_mask, file->events, file->user_mask);
-#endif
         file->user_mask |= mask;
         if ((file->user_mask & file->events) && !c_list_is_linked(&file->ready_link))
                 c_list_link_tail(&file->context->ready_list, &file->ready_link);
@@ -268,33 +258,33 @@ void dispatch_file_clear(DispatchFile *file, uint32_t mask) {
  * Return: 0 on success, negative error code on failure.
  */
 int dispatch_context_init(DispatchContext *ctx) {
-    *ctx = (DispatchContext)DISPATCH_CONTEXT_NULL(*ctx);
+        *ctx = (DispatchContext)DISPATCH_CONTEXT_NULL(*ctx);
 
 #ifdef __ZEPHYR__
-    // Allocate initial space for pollfd structures
-    ctx->fds = calloc(8, sizeof(struct pollfd));
-    ctx->files = calloc(8, sizeof(DispatchFile *));
-    
-    if (!ctx->fds || !ctx->files) {
-        free(ctx->fds);
-        free(ctx->files);
-        return error_origin(-ENOMEM);
-    }
-    ctx->n_fds_allocated = 8;
+        // Allocate initial space for pollfd structures
+        ctx->fds = calloc(8, sizeof(struct pollfd));
+        ctx->files = calloc(8, sizeof(DispatchFile *));
+        
+        if (!ctx->fds || !ctx->files) {
+            free(ctx->fds);
+            free(ctx->files);
+            return error_origin(-ENOMEM);
+        }
+        ctx->n_fds_allocated = 8;
 
-    // Initialize termination pipe
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, ctx->terminate_pipe) < 0) {
-        free(ctx->fds);
-        free(ctx->files);
-        return error_origin(-errno);
-    }
-#else
-    ctx->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
-    if (ctx->epoll_fd < 0)
+        // Initialize termination pipe
+        if (socketpair(AF_UNIX, SOCK_STREAM, 0, ctx->terminate_pipe) < 0) {
+            free(ctx->fds);
+            free(ctx->files);
             return error_origin(-errno);
+        }
+#else
+        ctx->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+        if (ctx->epoll_fd < 0)
+                return error_origin(-errno);
 #endif
 
-    return 0;
+        return 0;
 }
 
 /**
@@ -308,27 +298,27 @@ int dispatch_context_init(DispatchContext *ctx) {
  * safe to call this function multiple times.
  */
 void dispatch_context_deinit(DispatchContext *ctx) {
-    c_assert(!ctx->n_files);
-    c_assert(c_list_is_empty(&ctx->ready_list));
+        c_assert(!ctx->n_files);
+        c_assert(c_list_is_empty(&ctx->ready_list));
 
 #ifdef __ZEPHYR__
-    free(ctx->fds);
-    free(ctx->files);
-    ctx->fds = NULL;
-    ctx->files = NULL;
+        free(ctx->fds);
+        free(ctx->files);
+        ctx->fds = NULL;
+        ctx->files = NULL;
 
-    // Close termination pipes
-    if (ctx->terminate_pipe[0] != -1) {
-        close(ctx->terminate_pipe[0]);
-    }
-    if (ctx->terminate_pipe[1] != -1) {
-        close(ctx->terminate_pipe[1]);
-    }
+        // Close termination pipes
+        if (ctx->terminate_pipe[0] != -1) {
+            close(ctx->terminate_pipe[0]);
+        }
+        if (ctx->terminate_pipe[1] != -1) {
+            close(ctx->terminate_pipe[1]);
+        }
 
-    ctx->n_fds_allocated = 0;
-    ctx->n_fds_used = 0;
+        ctx->n_fds_allocated = 0;
+        ctx->n_fds_used = 0;
 #else
-    ctx->epoll_fd = c_close(ctx->epoll_fd);
+        ctx->epoll_fd = c_close(ctx->epoll_fd);
 #endif
 }
 
@@ -349,9 +339,6 @@ void dispatch_context_deinit(DispatchContext *ctx) {
  */
 int dispatch_context_poll(DispatchContext *ctx, int timeout) {
 #ifdef __ZEPHYR__
-    LOG_DBG("dispatch_context_poll: n_fds_used=%u, n_files=%u, n_fds_allocated=%u",
-            ctx->n_fds_used, ctx->n_files, ctx->n_fds_allocated);
-
     // 创建临时数组
     size_t total_fds = ctx->n_fds_used;
     struct pollfd *temp_fds = malloc(total_fds * sizeof(struct pollfd));
@@ -364,8 +351,6 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
 
     // 复制原始的fds和files指针，但根据 user_mask 设置要监听的事件
     for (size_t i = 0; i < ctx->n_fds_used; i++) {
-        // LOG_DBG("dispatch_context_poll: Copying fd[%u]: fd=%d, files[%u]=%p, user_mask=0x%x",
-                // i, ctx->fds[i].fd, i, ctx->files[i], ctx->files[i]->user_mask);
         if (!ctx->files[i]) {
             LOG_ERR("dispatch_context_poll: files[%u] is NULL!", i);
             free(temp_fds);
@@ -378,40 +363,21 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
         temp_files[i] = ctx->files[i];  // 复制指针
     }
 
-    // LOG_DBG("dispatch_context_poll: Calling poll with %u fds, timeout=%d", total_fds, timeout);
-    // for (size_t i = 0; i < total_fds; i++) {
-    //     LOG_DBG("dispatch_context_poll: Before poll - fd[%u]=%d, events=0x%x",
-    //             i, temp_fds[i].fd, temp_fds[i].events);
-    // }
-
     int result = poll(temp_fds, total_fds, timeout);
     if (result < 0) {
         free(temp_fds);
         free(temp_files);
         if (errno == EINTR)
             return 0;
-        LOG_DBG("dispatch_context_poll: poll error, errno=%d", errno);
+        LOG_WRN("dispatch_context_poll: poll error, errno=%d", errno);
         return error_origin(-errno);
     }
-
-    // 打印每个fd的revents
-    // for (size_t i = 0; i < total_fds; i++) {
-    //     LOG_DBG("dispatch_context_poll: fd[%u].fd=%d, revents=0x%x (POLLIN=%d, POLLOUT=%d, POLLHUP=%d, POLLERR=%d, POLLNVAL=%d)",
-    //             i, temp_fds[i].fd, temp_fds[i].revents,
-    //             !!(temp_fds[i].revents & POLLIN),
-    //             !!(temp_fds[i].revents & POLLOUT),
-    //             !!(temp_fds[i].revents & POLLHUP),
-    //             !!(temp_fds[i].revents & POLLERR),
-    //             !!(temp_fds[i].revents & POLLNVAL));
-    // }
 
     // 处理结果并更新文件事件
     // 注意：poll 是电平触发，不同于 epoll 的边沿触发
     // 对于 poll，revents 表示的是当前状态，而不是边沿事件
     // 因此我们只关心 user_mask 中请求的事件，并直接用 revents 的对应位来更新
-    // LOG_DBG("dispatch_context_poll: Processing events, n_files=%u", ctx->n_files);
     for (size_t i = 0; i < ctx->n_files; i++) {
-        // LOG_DBG("dispatch_context_poll: Accessing temp_files[%u]=%p", i, temp_files[i]);
         DispatchFile *f = temp_files[i];
 
         // 检查 NULL 指针和野指针
@@ -436,8 +402,6 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
         if (temp_fds[i].revents) {
             // 只保留在 user_mask 中的事件
             uint32_t new_events = temp_fds[i].revents & f->kernel_mask & f->user_mask;
-            // LOG_DBG("dispatch_context_poll: fd=%d, revents=0x%x, kernel_mask=0x%x, new_events=0x%x, user_mask=0x%x",
-                    // temp_fds[i].fd, temp_fds[i].revents, f->kernel_mask, new_events, f->user_mask);
             f->events = new_events;  // 直接赋值，不累加，因为 poll 是电平触发
             if (f->events && !c_list_is_linked(&f->ready_link))
                 c_list_link_tail(&f->context->ready_list, &f->ready_link);
@@ -451,44 +415,44 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
     free(temp_files);
 
 #else
-    _c_cleanup_(c_freep) void *buffer = NULL;
-    struct epoll_event *events, *e;
-    DispatchFile *f;
-    size_t n;
-    int r;
+        _c_cleanup_(c_freep) void *buffer = NULL;
+        struct epoll_event *events, *e;
+        DispatchFile *f;
+        size_t n;
+        int r;
 
-    n = ctx->n_files * sizeof(*events);
-    if (n > 128UL * 1024UL) {
-            buffer = malloc(n);
-            if (!buffer)
-                    return error_origin(-ENOMEM);
+        n = ctx->n_files * sizeof(*events);
+        if (n > 128UL * 1024UL) {
+                buffer = malloc(n);
+                if (!buffer)
+                        return error_origin(-ENOMEM);
 
-            events = buffer;
-    } else {
-            events = alloca(n);
-    }
+                events = buffer;
+        } else {
+                events = alloca(n);
+        }
 
-    r = epoll_wait(ctx->epoll_fd, events, ctx->n_files, timeout);
-    if (r < 0) {
-            if (errno == EINTR)
-                    return 0;
+        r = epoll_wait(ctx->epoll_fd, events, ctx->n_files, timeout);
+        if (r < 0) {
+                if (errno == EINTR)
+                        return 0;
 
-            return error_origin(-errno);
-    }
+                return error_origin(-errno);
+        }
 
-    while (r > 0) {
-            e = &events[--r];
-            f = e->data.ptr;
+        while (r > 0) {
+                e = &events[--r];
+                f = e->data.ptr;
 
-            c_assert(f->context == ctx);
+                c_assert(f->context == ctx);
 
-            f->events |= e->events & f->kernel_mask;
-            if ((f->events & f->user_mask) && !c_list_is_linked(&f->ready_link))
-                    c_list_link_tail(&f->context->ready_list, &f->ready_link);
-    }
+                f->events |= e->events & f->kernel_mask;
+                if ((f->events & f->user_mask) && !c_list_is_linked(&f->ready_link))
+                        c_list_link_tail(&f->context->ready_list, &f->ready_link);
+        }
 
 #endif
-    return 0;
+        return 0;
 }
 
 /**
@@ -529,7 +493,6 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
          */
         c_list_swap(&todo, &ctx->ready_list);
 
-        // LOG_DBG("dispatch_context_dispatch: Starting dispatch loop");
         while ((file = c_list_first_entry(&todo, DispatchFile, ready_link))) {
                 // LOG_DBG("dispatch_context_dispatch: About to dispatch file=%p", file);
                 if (!file) {
@@ -551,11 +514,8 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
                         c_list_unlink(&file->ready_link);
                         continue;
                 }
-                // LOG_DBG("dispatch_context_dispatch: file=%p, fd=%d, fn=%p, context=%p, user_mask=0x%x, events=0x%x",
-                //         file, file->fd, file->fn, file->context, file->user_mask, file->events);
                 c_list_unlink(&file->ready_link);
 
-                // LOG_DBG("dispatch_context_dispatch: Calling file->fn(file) at %p", file->fn);
                 r = file->fn(file);
                 if (error_trace(r)) {
                         c_list_splice(&ctx->ready_list, &todo);

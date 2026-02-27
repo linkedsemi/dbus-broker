@@ -20,19 +20,7 @@
 LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
 
 static int listener_dispatch(DispatchFile *file) {
-        /* Safety check - verify DispatchFile is valid before dereferencing */
-        if (!file) {
-                LOG_ERR("listener_dispatch: file is NULL!");
-                return -EFAULT;
-        }
-        if (file->fd < 0) {
-                LOG_ERR("listener_dispatch: file->fd is invalid: %d", file->fd);
-                return -EBADF;
-        }
-        // LOG_DBG("listener_dispatch: ENTRY - file=%p, file->fd=%d, file->fn=%p, file->context=%p",
-        //         file, file->fd, file->fn, file->context);
         Listener *listener = c_container_of(file, Listener, socket_file);
-        LOG_DBG("listener_dispatch: listener=%p, listener->socket_fd=%d", listener, listener->socket_fd);
         _c_cleanup_(peer_freep) Peer *peer = NULL;
         _c_cleanup_(c_closep) int fd = -1;
         int r;
@@ -143,43 +131,26 @@ static int listener_dispatch(DispatchFile *file) {
         }
 #endif
 
-        LOG_DBG("listener_dispatch: Calling peer_new_with_fd with fd=%d", fd);
         r = peer_new_with_fd(&peer, listener->bus, listener->policy, listener->guid, file->context, fd);
-        // LOG_DBG("listener_dispatch: peer_new_with_fd returned r=%d", r);
-        if (r == PEER_E_QUOTA || r == PEER_E_CONNECTION_REFUSED) {
-                 LOG_DBG("listener_dispatch: Connection refused or quota exceeded");
+        if (r == PEER_E_QUOTA || r == PEER_E_CONNECTION_REFUSED)
                 /*
                  * The user has too many open connections, or a policy disallows it to
                  * connect. Simply drop this.
                  */
                 return 0;
-        } else if (r) {
-                LOG_ERR("listener_dispatch: peer_new_with_fd failed: %d", r);
-                // return error_fold(r);
-                return 0;
-        }
+        else if (r)
+                return error_fold(r);
         fd = -1; /* consume fd */
 
         c_list_link_tail(&listener->peer_list, &peer->listener_link);
 
         r = peer_spawn(peer);
-        if (r) {
-                LOG_ERR("listener_dispatch: peer_spawn failed: %d", r);
-                // return error_fold(r);
-                return 0;
-        }
+        if (r)
+                return error_fold(r);
 
         r = peer_dispatch(&peer->connection.socket_file);
         peer = NULL;
-
-        if (r) {
-                LOG_ERR("listener_dispatch: peer_dispatch failed: %d", r);
-                /* Continue processing, don't return error */
-                return 0;
-        }
-
-        // return error_fold(r);
-        return 0;
+        return error_fold(r);
 }
 
 /**

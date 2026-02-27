@@ -126,14 +126,9 @@ int broker_new(Broker **brokerp, Log *log, const char *machine_id, int controlle
                     r != SOCKOPT_E_UNAVAILABLE &&
                     r != SOCKOPT_E_REAPED)
                         return error_fold(r);
+
                 /* keep `pid_fd == -1` if unavailable */
         }
-
-#ifdef __ZEPHYR__
-        // LOG_DBG("pid = %d, uid = %d, gid = %d", pid, uid, gid);
-#else
-        LOG_DBG("ucred.pid = %d, ucred.uid = %d, ucred.gid = %d", ucred.pid, ucred.uid, ucred.gid);
-#endif
 
         r = dispatch_context_init(&broker->dispatcher);
         if (r)
@@ -277,11 +272,11 @@ int broker_run(Broker *broker) {
                 r = error_fold(k);
 
         sigprocmask(SIG_SETMASK, &sigold, NULL);
+
         return r;
 #endif
 }
 
-/* Other existing functions remain unchanged */
 int broker_update_environment(Broker *broker, const char * const *env, size_t n_env) {
         return error_fold(controller_dbus_send_environment(&broker->controller, env, n_env));
 }
@@ -294,7 +289,9 @@ int broker_reload_config(Broker *broker, User *sender_user, uint64_t sender_id, 
                 if (r == CONTROLLER_E_SERIAL_EXHAUSTED ||
                     r == CONTROLLER_E_QUOTA)
                         return BROKER_E_FORWARD_FAILED;
+
                 return error_fold(r);
         }
+
         return 0;
 }

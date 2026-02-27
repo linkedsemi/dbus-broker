@@ -56,7 +56,7 @@ struct Bus {
         uint64_t activation_ids;
         uint64_t stats_ids;
 
-        alignas(8) Sampler sampler;
+        Sampler sampler;
 };
 
 #define BUS_NULL(_x) {                                                          \
