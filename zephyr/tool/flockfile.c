@@ -67,46 +67,46 @@ static void release_file_lock(struct file_lock *lock)
 }
 
 /* flockfile implementation */
-void flockfile(FILE *file)
-{
-    struct file_lock *lock = get_file_lock(file);
+// void flockfile(FILE *file)
+// {
+//     struct file_lock *lock = get_file_lock(file);
     
-    if (lock) {
-        k_mutex_lock(&lock->mutex, K_FOREVER);
-        lock->lock_count++;
-    }
-}
+//     if (lock) {
+//         k_mutex_lock(&lock->mutex, K_FOREVER);
+//         lock->lock_count++;
+//     }
+// }
 
 /* funlockfile implementation */
-void funlockfile(FILE *file)
-{
-    struct file_lock *lock = get_file_lock(file);
+// void funlockfile(FILE *file)
+// {
+//     struct file_lock *lock = get_file_lock(file);
     
-    if (lock && lock->lock_count > 0) {
-        lock->lock_count--;
-        if (lock->lock_count == 0) {
-            release_file_lock(lock);
-        }
-        k_mutex_unlock(&lock->mutex);
-    }
-}
+//     if (lock && lock->lock_count > 0) {
+//         lock->lock_count--;
+//         if (lock->lock_count == 0) {
+//             release_file_lock(lock);
+//         }
+//         k_mutex_unlock(&lock->mutex);
+//     }
+// }
 
 /* ftrylockfile implementation */
-int ftrylockfile(FILE *file)
-{
-    struct file_lock *lock = get_file_lock(file);
+// int ftrylockfile(FILE *file)
+// {
+//     struct file_lock *lock = get_file_lock(file);
     
-    if (!lock) {
-        return -1;  /* No available slots */
-    }
+//     if (!lock) {
+//         return -1;  /* No available slots */
+//     }
     
-    if (k_mutex_lock(&lock->mutex, K_NO_WAIT) == 0) {
-        lock->lock_count++;
-        return 0;  /* Success */
-    }
+//     if (k_mutex_lock(&lock->mutex, K_NO_WAIT) == 0) {
+//         lock->lock_count++;
+//         return 0;  /* Success */
+//     }
     
-    return -1;  /* Failed */
-}
+//     return -1;  /* Failed */
+// }
 
 /* getchar_unlocked implementation */
 #ifndef getchar_unlocked
