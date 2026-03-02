@@ -4,12 +4,13 @@
  * D-Bus Messages
  */
 
-#include <c-stdaux.h>
+// #include <c-stdaux.h>
 #include <stdlib.h>
 #include <endian.h>
 #include "dbus/address.h"
 #include "dbus/protocol.h"
 #include "util/ref.h"
+#include "util/string.h"
 
 typedef struct FDList FDList;
 typedef struct Log Log;
