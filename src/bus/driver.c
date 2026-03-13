@@ -688,6 +688,7 @@ static int driver_notify_name_owner_changed(Bus *bus, MatchRegistry *matches, co
 
                         c_list_unlink(&match_owner->destinations_link);
 
+#ifndef __ZEPHYR__
                         r = policy_snapshot_check_receive(receiver->policy,
                                                           NULL,
                                                           NULL,
@@ -706,6 +707,7 @@ static int driver_notify_name_owner_changed(Bus *bus, MatchRegistry *matches, co
 
                                 return error_fold(r);
                         }
+#endif
 
                         r = connection_queue(&receiver->connection, NULL, message);
                         if (r) {

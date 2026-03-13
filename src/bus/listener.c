@@ -192,7 +192,12 @@ int listener_init_with_fd(Listener *l,
         dispatch_file_select(&listener->socket_file, EPOLLIN);
 
         listener->socket_fd = socket_fd;
+#ifdef __ZEPHYR__
+        /* On Zephyr, skip policy to ensure peer->policy is always NULL */
+        listener->policy = NULL;
+#else
         listener->policy = policy;
+#endif
         listener = NULL;
         return 0;
 }
@@ -213,6 +218,12 @@ void listener_deinit(Listener *listener) {
  * listener_set_policy() - XXX
  */
 int listener_set_policy(Listener *listener, PolicyRegistry *registry) {
+#ifdef __ZEPHYR__
+        /* On Zephyr, skip policy setting to ensure peer->policy is always NULL */
+        (void)listener;
+        (void)registry;
+        return 0;
+#else
         Peer *peer;
         int r;
 
@@ -236,4 +247,5 @@ int listener_set_policy(Listener *listener, PolicyRegistry *registry) {
         policy_registry_free(listener->policy);
         listener->policy = registry;
         return 0;
+#endif
 }

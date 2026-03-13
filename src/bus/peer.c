@@ -32,6 +32,8 @@
 #include "util/sockopt.h"
 #include "util/user.h"
 
+LOG_MODULE_REGISTER(DBUS_LOG_PEER, LOG_LEVEL_DBG);
+
 static int peer_dispatch_connection(Peer *peer, uint32_t events) {
         int r;
 
@@ -482,12 +484,8 @@ int peer_request_name(Peer *peer, const char *name, uint32_t flags, NameChange *
         if (name[0] == ':')
                 return PEER_E_NAME_UNIQUE;
 
-#ifdef __ZEPHYR__
-        /* Skip policy check on Zephyr when policy is NULL */
-        r = 0;
-#else
+#ifndef __ZEPHYR__
         r = policy_snapshot_check_own(peer->policy, name);
-#endif
         if (r) {
                 if (r == POLICY_E_ACCESS_DENIED ||
                     r == POLICY_E_SELINUX_ACCESS_DENIED ||
@@ -496,6 +494,13 @@ int peer_request_name(Peer *peer, const char *name, uint32_t flags, NameChange *
 
                 return error_fold(r);
         }
+#else
+        // Zephyr: Skipping policy check
+        if (peer->policy) {
+                // This should not happen in Zephyr
+                return PEER_E_NAME_REFUSED;
+        }
+#endif
 
         r = name_registry_request_name(&peer->bus->names,
                                        &peer->owned_names,
@@ -865,7 +870,6 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
                                           message->header->type,
                                           false,
                                           message->metadata.fields.unix_fds);
-#endif
         if (r) {
                 if (r == POLICY_E_ACCESS_DENIED ||
                     r == POLICY_E_SELINUX_ACCESS_DENIED ||
@@ -887,6 +891,7 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
 
                 return error_fold(r);
         }
+#endif
 
 #ifdef __ZEPHYR__
         /* Skip policy check on Zephyr when sender_policy is NULL */
@@ -915,7 +920,6 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
                                        message->header->type,
                                        false,
                                        message->metadata.fields.unix_fds);
-#endif
         if (r) {
                 if (r == POLICY_E_ACCESS_DENIED ||
                     r == POLICY_E_SELINUX_ACCESS_DENIED ||
@@ -924,16 +928,8 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
                         bus_log_append_policy_send(receiver->bus,
                                                    peer_map_denied_error(r),
                                                    sender_id, receiver->id, sender_names, &receiver_names,
-#ifdef __ZEPHYR__
-                                                   sender_policy ? sender_policy->seclabel : NULL,
-#else
                                                    sender_policy->seclabel,
-#endif
-#ifdef __ZEPHYR__
-                                                   receiver->policy ? receiver->policy->seclabel : NULL,
-#else
                                                    receiver->policy->seclabel,
-#endif
                                                    message);
                         r = log_commitf(receiver->bus->log, "A security policy denied :1.%llu to send %s %s:%s.%s to %s.",
                                         sender_id,
@@ -948,6 +944,7 @@ int peer_queue_unicast(PolicySnapshot *sender_policy, NameSet *sender_names, Rep
 
                 return error_fold(r);
         }
+#endif
 
         r = connection_queue(&receiver->connection, sender_user, message);
         if (r) {

@@ -57,7 +57,7 @@
 #include <sys/epoll.h>
 #endif
 
-LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_DBG);
+LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_INF);
 
 /**
  * dispatch_file_init() - initialize dispatch file
@@ -114,6 +114,15 @@ int dispatch_file_init(DispatchFile *file,
         ctx->files[ctx->n_fds_used] = file;
 
         ctx->n_fds_used++;
+
+        // Wake up the poll thread by writing to terminate_pipe
+        char byte = 1;
+        ssize_t write_result = write(ctx->terminate_pipe[1], &byte, 1);
+        if (write_result < 0) {
+            LOG_ERR("dispatch_file_init: failed to write to terminate_pipe, errno=%d", errno);
+        } else {
+            LOG_DBG("dispatch_file_init: woke up poll thread by writing to terminate_pipe");
+        }
 #else
         int r;
 
@@ -339,10 +348,9 @@ void dispatch_context_deinit(DispatchContext *ctx) {
  */
 int dispatch_context_poll(DispatchContext *ctx, int timeout) {
 #ifdef __ZEPHYR__
-    // 创建临时数组
     size_t total_fds = ctx->n_fds_used;
-    struct pollfd *temp_fds = malloc(total_fds * sizeof(struct pollfd));
-    DispatchFile **temp_files = malloc(ctx->n_fds_used * sizeof(DispatchFile *));
+    struct pollfd *temp_fds = malloc((total_fds + 1) * sizeof(struct pollfd));
+    DispatchFile **temp_files = malloc((total_fds + 1) * sizeof(DispatchFile *));
     if (!temp_fds || !temp_files) {
         free(temp_fds);
         free(temp_files);
@@ -350,7 +358,7 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
     }
 
     // 复制原始的fds和files指针，但根据 user_mask 设置要监听的事件
-    for (size_t i = 0; i < ctx->n_fds_used; i++) {
+    for (size_t i = 0; i < total_fds; i++) {
         if (!ctx->files[i]) {
             LOG_ERR("dispatch_context_poll: files[%u] is NULL!", i);
             free(temp_fds);
@@ -363,7 +371,14 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
         temp_files[i] = ctx->files[i];  // 复制指针
     }
 
-    int result = poll(temp_fds, total_fds, timeout);
+    // Add terminate_pipe[0] to poll set for wake-up notifications
+    temp_fds[total_fds].fd = ctx->terminate_pipe[0];
+    temp_fds[total_fds].events = POLLIN;
+    temp_fds[total_fds].revents = 0;
+    temp_files[total_fds] = NULL;  // No DispatchFile for terminate_pipe
+
+    int result = poll(temp_fds, total_fds + 1, timeout);
+
     if (result < 0) {
         free(temp_fds);
         free(temp_files);
@@ -373,11 +388,23 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
         return error_origin(-errno);
     }
 
+    // Clear the terminate_pipe by reading once
+    // Note: Zephyr's socketpair recv doesn't support MSG_DONTWAIT, so we only read once
+    if (temp_fds[total_fds].revents & POLLIN) {
+        char buffer[32];
+        ssize_t read_bytes = recv(ctx->terminate_pipe[0], buffer, sizeof(buffer), 0);
+        if (read_bytes > 0) {
+            LOG_DBG("dispatch_context_poll: cleared terminate_pipe, read %zd bytes", read_bytes);
+        } else {
+            LOG_WRN("dispatch_context_poll: recv returned %zd, errno=%d", read_bytes, errno);
+        }
+    }
+
     // 处理结果并更新文件事件
     // 注意：poll 是电平触发，不同于 epoll 的边沿触发
     // 对于 poll，revents 表示的是当前状态，而不是边沿事件
     // 因此我们只关心 user_mask 中请求的事件，并直接用 revents 的对应位来更新
-    for (size_t i = 0; i < ctx->n_files; i++) {
+    for (size_t i = 0; i < total_fds; i++) {
         DispatchFile *f = temp_files[i];
 
         // 检查 NULL 指针和野指针
@@ -408,6 +435,9 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
         } else {
             // 如果poll没有返回事件，清除这个fd的所有旧events
             f->events = 0;
+            // 如果 fd 不再有事件，从 ready_list 中移除
+            if (c_list_is_linked(&f->ready_link))
+                c_list_unlink(&f->ready_link);
         }
     }
 
@@ -500,7 +530,7 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
                         break;
                 }
                 if (file->fd < 0) {
-                        LOG_ERR("dispatch_context_dispatch: file->fd is invalid: %d", file->fd);
+                        // LOG_ERR("dispatch_context_dispatch: file->fd is invalid: %d", file->fd);
                         c_list_unlink(&file->ready_link);
                         continue;
                 }

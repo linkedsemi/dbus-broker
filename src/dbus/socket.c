@@ -860,6 +860,7 @@ static int socket_dispatch_write(Socket *socket) {
         if (n_msgs < 0) {
                 switch (errno) {
                 case EAGAIN:
+                case EMSGSIZE:
                         return 0;
                 case ETOOMANYREFS:
                         /*
