@@ -17,11 +17,26 @@ zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/dbus)
 zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/util)
 
 # Subproject include directories (essential dependencies)
-zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/../subprojects/libcstdaux-1/src)
-zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/../subprojects/libcrbtree-3/src)
-zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/../subprojects/libclist-3/src)
-zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/../subprojects/libcdvar-1/src)
-zephyr_library_include_directories(${DBUS_BROKER_SOURCE_DIR}/../subprojects/libcutf8-1/src)
+set(DBUS_BROKER_SUBPROJECTS_DIR ${CMAKE_CURRENT_LIST_DIR}/../subprojects)
+
+# Add subproject include directories to the dbus_broker target
+target_include_directories(dbus_broker PRIVATE
+  ${DBUS_BROKER_SUBPROJECTS_DIR}/libcstdaux-1/src
+  ${DBUS_BROKER_SUBPROJECTS_DIR}/libcrbtree-3/src
+  ${DBUS_BROKER_SUBPROJECTS_DIR}/libclist-3/src
+  ${DBUS_BROKER_SUBPROJECTS_DIR}/libcdvar-1/src
+  ${DBUS_BROKER_SUBPROJECTS_DIR}/libcutf8-1/src
+  ${DBUS_BROKER_SUBPROJECTS_DIR}
+)
+
+# Add subproject include directories globally
+include_directories(
+  ${DBUS_BROKER_SUBPROJECTS_DIR}/libcstdaux-1/src
+  ${DBUS_BROKER_SUBPROJECTS_DIR}/libcrbtree-3/src
+  ${DBUS_BROKER_SUBPROJECTS_DIR}/libclist-3/src
+  ${DBUS_BROKER_SUBPROJECTS_DIR}/libcdvar-1/src
+  ${DBUS_BROKER_SUBPROJECTS_DIR}/libcutf8-1/src
+)
 
 # Compilation definitions for Zephyr
 zephyr_library_compile_definitions(
@@ -117,3 +132,7 @@ zephyr_cc_option(-Wno-unused-but-set-variable)
 zephyr_cc_option(-Wno-pointer-sign)
 zephyr_cc_option(-fno-strict-aliasing)
 zephyr_cc_option(-fno-common)
+
+# Link basu library for sd-event support
+# Note: This creates a circular dependency, so we use INTERFACE to avoid it
+target_link_libraries(dbus_broker INTERFACE basu)

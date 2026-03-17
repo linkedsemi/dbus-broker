@@ -18,6 +18,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+
+#ifdef __ZEPHYR__
+#include "dbus_broker_zephyr_compat.h"
+#endif
+
 #include "dbus/sasl.h"
 #include "util/error.h"
 #include "util/string.h"

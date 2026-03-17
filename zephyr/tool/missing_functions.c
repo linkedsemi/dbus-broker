@@ -1,10 +1,13 @@
 /* Additional missing functions for dbus-broker on Zephyr */
 
+/* Must include Zephyr headers first to avoid type conflicts */
 #include <zephyr/kernel.h>
+#include <zephyr/posix/unistd.h>
+#include <zephyr/posix/fcntl.h>
+#include <zephyr/posix/signal.h>
+
 #include <errno.h>
 #include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <sys/socket.h>
 #include "dbus_broker_zephyr_compat.h"
 

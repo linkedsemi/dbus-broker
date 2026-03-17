@@ -12,6 +12,11 @@ zephyr_library_include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/src/bus
   ${CMAKE_CURRENT_SOURCE_DIR}/src/dbus
   ${CMAKE_CURRENT_SOURCE_DIR}/src/util
+  ${CMAKE_CURRENT_SOURCE_DIR}/subprojects/libcdvar-1/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/subprojects/libclist-3/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/subprojects/libcrbtree-3/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/subprojects/libcstdaux-1/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/subprojects/libcutf8-1/src
 )
 
 # Compile definitions for Zephyr compatibility

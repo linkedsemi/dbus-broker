@@ -246,6 +246,10 @@ void c_closep(int *fdp);
 char *strncpy(char *dest, const char *src, size_t n);
 #endif
 
+#ifndef __BUILTIN_STRNLEN
+size_t strnlen(const char *str, size_t maxlen);
+#endif
+
 /* Missing constants */
 #ifndef AT_FDCWD
 #define AT_FDCWD (-100)

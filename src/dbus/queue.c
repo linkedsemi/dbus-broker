@@ -9,6 +9,10 @@
 #include "util/fdlist.h"
 #include "util/error.h"
 
+#ifdef __ZEPHYR__
+#include "dbus_broker_zephyr_compat.h"
+#endif
+
 /**
  * iqueue_init() - XXX
  */

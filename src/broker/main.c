@@ -9,6 +9,11 @@
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+
+#ifndef PACKAGE_VERSION
+#define PACKAGE_VERSION "unknown"
+#endif
+
 #include "broker/broker.h"
 #include "broker/main.h"
 #include "util/audit.h"
@@ -80,7 +85,7 @@ static int parse_argv(int argc, char *argv[]) {
                         return MAIN_EXIT;
 
                 case ARG_VERSION:
-                        printf("dbus-broker %d\n", PACKAGE_VERSION);
+                        printf("dbus-broker %s\n", PACKAGE_VERSION);
                         return MAIN_EXIT;
 
                 case ARG_AUDIT:

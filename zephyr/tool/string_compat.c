@@ -86,3 +86,13 @@ char *strncpy(char *dest, const char *src, size_t n) {
     return dest;
 }
 #endif
+
+#ifndef __BUILTIN_STRNLEN
+size_t strnlen(const char *str, size_t maxlen) {
+    size_t len = 0;
+    while (len < maxlen && str[len] != '\0') {
+        len++;
+    }
+    return len;
+}
+#endif

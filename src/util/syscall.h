@@ -11,7 +11,14 @@
 
 #include <stdlib.h>
 #include <sys/resource.h>
+#include <unistd.h>
+
+#ifdef __ZEPHYR__
+#include "sys_syscall.h"
+#include "dbus_broker_zephyr_compat.h"
+#else
 #include <sys/syscall.h>
+#endif
 
 /**
  * syscall_memfd_create() - wrapper for memfd_create(2) syscall
@@ -31,6 +38,10 @@ static inline int syscall_memfd_create(const char *name, unsigned int flags) {
         long nr = 319;
 #elif defined __i386__
         long nr = 356;
+#elif defined __riscv && __riscv_xlen == 32
+        long nr = 279;  // RISC-V 32-bit memfd_create syscall number
+#elif defined __riscv && __riscv_xlen == 64
+        long nr = 279;  // RISC-V 64-bit memfd_create syscall number
 #else
 #  error "__NR_memfd_create is undefined"
 #endif
@@ -53,6 +64,8 @@ static inline int syscall_pidfd_open(pid_t pid, unsigned int flags) {
         long nr = __NR_pidfd_open;
 #elif defined(__x86_64__) || defined(__i386__) || defined(__aarch64__) || defined(__arm__)
         long nr = 434;
+#elif defined __riscv
+        long nr = 434;  // RISC-V pidfd_open syscall number (same as x86)
 #else
 #  error "__NR_pidfd_open is undefined"
 #endif

@@ -10,8 +10,14 @@
  */
 
 #include <c-stdaux.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+
+#ifdef __ZEPHYR__
+#include "dbus_broker_zephyr_compat.h"
+#endif
+
 #include "util/error.h"
 #include "util/fdlist.h"
 

@@ -1,11 +1,14 @@
 /* Additional system function implementations for dbus-broker on Zephyr */
 
+/* Must include Zephyr headers first to avoid type conflicts */
 #include <zephyr/kernel.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/random/random.h>
+
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
 #include "dbus_broker_zephyr_compat.h"
 
 /* Program name for syslog compatibility - skip definition, use sys_compat.c definition */

@@ -45,7 +45,16 @@
 #include <c-list.h>
 #include <c-stdaux.h>
 #include <stdlib.h>
+
+#ifdef __ZEPHYR__
+#include <zephyr/kernel.h>
+#include <zephyr/posix/poll.h>
+#include <zephyr/sys/timeutil.h>
+#include <zephyr/net/socket.h>
+#else
 #include <sys/epoll.h>
+#endif
+
 #include "util/dispatch.h"
 #include "util/error.h"
 
@@ -166,24 +175,31 @@ int dispatch_file_init(DispatchFile *file,
  * dispatch_file_deinit() *BEFORE* closing the FD.
  */
 void dispatch_file_deinit(DispatchFile *file) {
-        if (file->context) {
+        if (!file->context) {
+                return;
+        }
+        
 #ifdef __ZEPHYR__
-                // Find and remove from the poll array
-                for (size_t i = 0; i < file->context->n_fds_used; i++) {
-                    if (file->context->files[i] == file) {
-                        // Move last element to current position to fill gap
-                        if (i < file->context->n_fds_used - 1) {
-                            file->context->fds[i] = file->context->fds[file->context->n_fds_used - 1];
-                            file->context->files[i] = file->context->files[file->context->n_fds_used - 1];
-                        }
-                        file->context->n_fds_used--;
-                        
-                        // Clear ready link
-                        c_list_unlink(&file->ready_link);
-                        --file->context->n_files;
-                        break;
-                    }
+        // Find and remove from the poll array
+        bool found = false;
+        for (size_t i = 0; i < file->context->n_fds_used; i++) {
+            if (file->context->files[i] == file) {
+                found = true;
+                
+                // Move last element to current position to fill gap
+                if (i < file->context->n_fds_used - 1) {
+                    file->context->fds[i] = file->context->fds[file->context->n_fds_used - 1];
+                    file->context->files[i] = file->context->files[file->context->n_fds_used - 1];
                 }
+                file->context->n_fds_used--;
+                
+                // Clear ready link
+                c_list_unlink(&file->ready_link);
+                --file->context->n_files;
+                
+                break;
+            }
+        }
 #else
                 int r;
 
@@ -193,7 +209,6 @@ void dispatch_file_deinit(DispatchFile *file) {
                 --file->context->n_files;
                 c_list_unlink(&file->ready_link);
 #endif
-        }
 
         file->fd = -1;
         file->fn = NULL;
@@ -282,11 +297,14 @@ int dispatch_context_init(DispatchContext *ctx) {
         ctx->n_fds_allocated = 8;
 
         // Initialize termination pipe
-        if (socketpair(AF_UNIX, SOCK_STREAM, 0, ctx->terminate_pipe) < 0) {
+        int ret = socketpair(AF_UNIX, SOCK_STREAM, 0, ctx->terminate_pipe);
+        if (ret < 0) {
+            LOG_ERR("socketpair failed: %d", errno);
             free(ctx->fds);
             free(ctx->files);
             return error_origin(-errno);
         }
+        LOG_INF("Termination pipe initialized: [%d, %d]", ctx->terminate_pipe[0], ctx->terminate_pipe[1]);
 #else
         ctx->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
         if (ctx->epoll_fd < 0)
@@ -349,6 +367,13 @@ void dispatch_context_deinit(DispatchContext *ctx) {
 int dispatch_context_poll(DispatchContext *ctx, int timeout) {
 #ifdef __ZEPHYR__
     size_t total_fds = ctx->n_fds_used;
+    
+    // Check if arrays are valid
+    if (total_fds > 0 && (!ctx->fds || !ctx->files)) {
+        LOG_ERR("dispatch_context_poll: n_fds_used=%zu but fds or files is NULL!", total_fds);
+        return error_origin(-EFAULT);
+    }
+    
     struct pollfd *temp_fds = malloc((total_fds + 1) * sizeof(struct pollfd));
     DispatchFile **temp_files = malloc((total_fds + 1) * sizeof(DispatchFile *));
     if (!temp_fds || !temp_files) {
@@ -357,7 +382,7 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
         return error_origin(-ENOMEM);
     }
 
-    // 复制原始的fds和files指针，但根据 user_mask 设置要监听的事件
+    // 复制原始的 fds 和 files 指针，但根据 user_mask 设置要监听的事件
     for (size_t i = 0; i < total_fds; i++) {
         if (!ctx->files[i]) {
             LOG_ERR("dispatch_context_poll: files[%u] is NULL!", i);
@@ -376,7 +401,17 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
     temp_fds[total_fds].events = POLLIN;
     temp_fds[total_fds].revents = 0;
     temp_files[total_fds] = NULL;  // No DispatchFile for terminate_pipe
-
+    
+    // Validate all FDs before calling poll
+    for (size_t i = 0; i < total_fds + 1; i++) {
+        if (temp_fds[i].fd < 0) {
+            LOG_ERR("dispatch_context_poll: Invalid fd at index %zu: fd=%d", i, temp_fds[i].fd);
+            free(temp_fds);
+            free(temp_files);
+            return error_origin(-EINVAL);
+        }
+    }
+    
     int result = poll(temp_fds, total_fds + 1, timeout);
 
     if (result < 0) {

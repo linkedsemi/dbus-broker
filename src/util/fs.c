@@ -5,8 +5,14 @@
 #include <c-stdaux.h>
 #include <dirent.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#ifdef __ZEPHYR__
+#include "dbus_broker_zephyr_compat.h"
+#endif
+
 #include "util/error.h"
 #include "util/fs.h"
 #include "util/string.h"

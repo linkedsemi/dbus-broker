@@ -4,6 +4,9 @@
 #define _GNU_SOURCE
 #endif
 
+/* Include c-stdaux first to get compiler macros */
+#include <c-stdaux.h>
+
 /* Ensure basic C library functions are available */
 #include <string.h>
 #include <stdlib.h>
@@ -23,13 +26,13 @@
 #ifdef __ZEPHYR__
 #include "dbus_broker_zephyr_compat.h"
 #endif
+#include "config.h"
+
+/* Include logging after config to avoid LOG_ERR redefinition */
 #include <zephyr/logging/log.h>
 
-#include "config.h"
-// #include "dbus_broker_zephyr_compat.h"
-
 /* Provide sys/syscall.h compatibility for Zephyr */
-#ifdef DBUS_BROKER_BUILD_ZEPHYR
+#ifdef __ZEPHYR__
 #include "sys_syscall.h"
 #endif
 

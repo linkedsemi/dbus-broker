@@ -8,8 +8,14 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#ifdef __ZEPHYR__
+#include "dbus_broker_zephyr_compat.h"
+#endif
+
 #include "util/error.h"
 #include "util/misc.h"
 #include "util/syscall.h"

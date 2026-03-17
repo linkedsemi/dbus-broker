@@ -7,6 +7,12 @@
 #include <c-rbtree.h>
 #include <c-stdaux.h>
 #include <stdlib.h>
+#include <string.h>
+
+#ifdef __ZEPHYR__
+#include "dbus_broker_zephyr_compat.h"
+#endif
+
 #include "bus/name.h"
 #include "bus/policy.h"
 #include "dbus/protocol.h"
