@@ -7,7 +7,7 @@
 // #include <c-stdaux.h>
 #include <stdlib.h>
 #include <endian.h>
-#include <sys/uio.h>
+#include <zephyr/net/net_ip.h>
 #include "dbus/address.h"
 #include "dbus/protocol.h"
 #include "util/ref.h"
