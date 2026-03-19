@@ -176,6 +176,7 @@ int dispatch_file_init(DispatchFile *file,
  */
 void dispatch_file_deinit(DispatchFile *file) {
         if (!file->context) {
+                LOG_DBG("[dispatch] dispatch_file_deinit: file->context is NULL, nothing to do");
                 return;
         }
         
@@ -197,8 +198,15 @@ void dispatch_file_deinit(DispatchFile *file) {
                 c_list_unlink(&file->ready_link);
                 --file->context->n_files;
                 
+                LOG_DBG("[dispatch] dispatch_file_deinit: removed file=%p, fd=%d, n_files=%zu, n_fds_used=%zu", 
+                        file, file->fd, file->context->n_files, file->context->n_fds_used);
                 break;
             }
+        }
+        
+        if (!found) {
+            LOG_ERR("[dispatch] dispatch_file_deinit: file=%p not found in context! n_files=%zu, n_fds_used=%zu", 
+                    file, file->context->n_files, file->context->n_fds_used);
         }
 #else
                 int r;
@@ -325,6 +333,9 @@ int dispatch_context_init(DispatchContext *ctx) {
  * safe to call this function multiple times.
  */
 void dispatch_context_deinit(DispatchContext *ctx) {
+        LOG_DBG("[dispatch] dispatch_context_deinit: n_files=%zu, n_fds_used=%zu, ready_list_empty=%d", 
+                ctx->n_files, ctx->n_fds_used, c_list_is_empty(&ctx->ready_list));
+        
         c_assert(!ctx->n_files);
         c_assert(c_list_is_empty(&ctx->ready_list));
 
@@ -412,8 +423,13 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
         }
     }
     
+    LOG_DBG("[dispatch] poll called: total_fds=%zu, timeout=%d, terminate_pipe[0]=%d", 
+            total_fds, timeout, ctx->terminate_pipe[0]);
+    
     int result = poll(temp_fds, total_fds + 1, timeout);
 
+    LOG_DBG("[dispatch] poll returned: result=%d, errno=%d", result, errno);
+    
     if (result < 0) {
         free(temp_fds);
         free(temp_files);
@@ -539,7 +555,15 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
         DispatchFile *file;
         int r;
 
-        r = dispatch_context_poll(ctx, c_list_is_empty(&ctx->ready_list) ? -1 : 0);
+        LOG_DBG("[dispatch] dispatch_context_dispatch called, ready_list empty=%d", 
+                c_list_is_empty(&ctx->ready_list));
+
+        /* Use non-blocking poll (timeout=0) to avoid blocking in dispatch phase.
+         * The blocking should happen in sd_event_wait, not here. */
+        r = dispatch_context_poll(ctx, 0);
+        
+        LOG_DBG("[dispatch] dispatch_context_poll returned %d", r);
+        
         if (r)
                 return error_fold(r);
 
