@@ -447,11 +447,14 @@ struct passwd *getpwuid(uid_t uid);
 int getgrouplist(const char *user, gid_t group, gid_t *groups, int *ngroups);
 
 /* Cred structure */
+#ifndef HAVE_STRUCT_UCRED
+#define HAVE_STRUCT_UCRED
 struct ucred {
     pid_t pid;
     uid_t uid;
     gid_t gid;
 };
+#endif
 
 /* IOV_MAX definition */
 #ifndef IOV_MAX
