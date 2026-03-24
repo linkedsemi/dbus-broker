@@ -14,43 +14,43 @@
 /* Program name for syslog compatibility - skip definition, use sys_compat.c definition */
 
 /* strdup implementation */
-char *strdup(const char *s)
-{
-    /* Remove NULL check since function is marked nonnull */
-    if (0 && !s) {
-        return NULL;
-    }
+// char *strdup(const char *s)
+// {
+//     /* Remove NULL check since function is marked nonnull */
+//     if (0 && !s) {
+//         return NULL;
+//     }
     
-    size_t len = strlen(s) + 1;
-    char *copy = malloc(len);
-    if (copy) {
-        memcpy(copy, s, len);
-    }
+//     size_t len = strlen(s) + 1;
+//     char *copy = malloc(len);
+//     if (copy) {
+//         memcpy(copy, s, len);
+//     }
     
-    return copy;
-}
+//     return copy;
+// }
 
 /* strndup implementation */
-char *strndup(const char *s, size_t n)
-{
-    /* Remove NULL check since function is marked nonnull */
-    if (0 && !s) {
-        return NULL;
-    }
+// char *strndup(const char *s, size_t n)
+// {
+//     /* Remove NULL check since function is marked nonnull */
+//     if (0 && !s) {
+//         return NULL;
+//     }
     
-    size_t len = strlen(s);
-    if (len > n) {
-        len = n;
-    }
+//     size_t len = strlen(s);
+//     if (len > n) {
+//         len = n;
+//     }
     
-    char *copy = malloc(len + 1);
-    if (copy) {
-        memcpy(copy, s, len);
-        copy[len] = '\0';
-    }
+//     char *copy = malloc(len + 1);
+//     if (copy) {
+//         memcpy(copy, s, len);
+//         copy[len] = '\0';
+//     }
     
-    return copy;
-}
+//     return copy;
+// }
 
 /* getrandom implementation - use Zephyr's random number generator */
 ssize_t getrandom(void *buf, size_t buflen, unsigned int flags)
@@ -71,28 +71,28 @@ ssize_t getrandom(void *buf, size_t buflen, unsigned int flags)
 }
 
 /* realpath implementation - simplified */
-char *realpath(const char *path, char *resolved_path)
-{
-    if (!path) {
-        errno = EINVAL;
-        return NULL;
-    }
-    
-    char *result = resolved_path;
-    if (!result) {
-        result = malloc(PATH_MAX);
-        if (!result) {
-            errno = ENOMEM;
-            return NULL;
-        }
-    }
-    
-    /* Simple implementation - just copy the path */
-    strncpy(result, path, PATH_MAX - 1);
-    result[PATH_MAX - 1] = '\0';
-    
-    return result;
-}
+// char *realpath(const char *path, char *resolved_path)
+// {
+//     if (!path) {
+//         errno = EINVAL;
+//         return NULL;
+//     }
+
+//     char *result = resolved_path;
+//     if (!result) {
+//         result = malloc(PATH_MAX);
+//         if (!result) {
+//             errno = ENOMEM;
+//             return NULL;
+//         }
+//     }
+
+//     /* Simple implementation - just copy the path */
+//     strncpy(result, path, PATH_MAX - 1);
+//     result[PATH_MAX - 1] = '\0';
+
+//     return result;
+// }
 
 /* mkstemp implementation - not supported */
 int mkstemp(char *template)
