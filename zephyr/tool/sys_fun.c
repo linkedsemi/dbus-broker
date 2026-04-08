@@ -120,26 +120,26 @@ void *valloc(size_t size)
     return malloc(size);
 }
 
-int posix_memalign(void **memptr, size_t alignment, size_t size)
-{
-    if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
-        return EINVAL;
-    }
+// int posix_memalign(void **memptr, size_t alignment, size_t size)
+// {
+//     if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
+//         return EINVAL;
+//     }
     
-    void *ptr = malloc(size);
-    if (!ptr) {
-        return ENOMEM;
-    }
+//     void *ptr = malloc(size);
+//     if (!ptr) {
+//         return ENOMEM;
+//     }
     
-    /* Simple alignment - may not work for all cases */
-    if (((uintptr_t)ptr & (alignment - 1)) != 0) {
-        free(ptr);
-        return ENOMEM;
-    }
+//     /* Simple alignment - may not work for all cases */
+//     if (((uintptr_t)ptr & (alignment - 1)) != 0) {
+//         free(ptr);
+//         return ENOMEM;
+//     }
     
-    *memptr = ptr;
-    return 0;
-}
+//     *memptr = ptr;
+//     return 0;
+// }
 
 /* inotify implementations - not supported in Zephyr */
 int inotify_init(void)
