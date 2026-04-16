@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config DBUS_BROKER
+    bool "Enable dbus-broker (D-Bus message broker)"
+    default y
+    select BASU
+    help
+      Enable the dbus-broker library, which provides a high-performance
+      D-Bus message broker implementation for Zephyr RTOS.
+
+if DBUS_BROKER
+
+config DBUS_BROKER_LOG_LEVEL
+    int "dbus-broker log level"
+    default 3
+    range 0 4
+    help
+      Set the logging level for dbus-broker library.
+      0 = OFF, 1 = ERROR, 2 = WARNING, 3 = INFO, 4 = DEBUG
+
+endif # DBUS_BROKER
