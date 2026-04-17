@@ -2,21 +2,3 @@ name: dbus-broker
 build:
   cmake: zephyr
   kconfig: zephyr/Kconfig
-settings:
-  # Define the module's root directory
-  module_root: .
-  # Export include directories for other modules
-  includes:
-    - zephyr/include
-    - src
-    - src/broker
-    - src/bus
-    - src/dbus
-    - src/util
-    - subprojects/libcdvar-1/src
-    - subprojects/libclist-3/src
-    - subprojects/libcrbtree-3/src
-    - subprojects/libcstdaux-1/src
-    - subprojects/libcutf8-1/src
-depends:
-  - basu
