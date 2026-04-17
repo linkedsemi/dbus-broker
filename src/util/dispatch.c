@@ -58,14 +58,6 @@
 #include "util/dispatch.h"
 #include "util/error.h"
 
-#ifdef __ZEPHYR__
-#include <zephyr/kernel.h>
-#include <zephyr/posix/poll.h>
-#include <zephyr/sys/timeutil.h>
-#else
-#include <sys/epoll.h>
-#endif
-
 LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_INF);
 
 /**
