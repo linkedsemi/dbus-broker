@@ -2,7 +2,7 @@
 
 config DBUS_BROKER
     bool "Enable dbus-broker (D-Bus message broker)"
-    default y
+    default n
     select BASU
     help
       Enable the dbus-broker library, which provides a high-performance
