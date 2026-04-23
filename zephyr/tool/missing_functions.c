@@ -23,14 +23,14 @@ int signalfd(int fd, const sigset_t *mask, int flags)
 }
 
 /* ioctl implementation - minimal for Zephyr */
-int ioctl(int fd, unsigned long request, ...)
-{
-    ARG_UNUSED(fd);
-    ARG_UNUSED(request);
+// int ioctl(int fd, unsigned long request, ...)
+// {
+//     ARG_UNUSED(fd);
+//     ARG_UNUSED(request);
     
-    errno = ENOTSUP;
-    return -1;
-}
+//     errno = ENOTSUP;
+//     return -1;
+// }
 
 /* fchmod implementation - not supported in Zephyr */
 int fchmod(int fd, mode_t mode)
