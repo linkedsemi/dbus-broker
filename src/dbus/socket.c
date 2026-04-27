@@ -748,6 +748,12 @@ static int socket_dispatch_read(Socket *socket) {
 static int socket_dispatch_write(Socket *socket) {
         SocketBuffer *buffer, *safe;
         struct mmsghdr msgs[SOCKET_MMSG_MAX];
+#ifdef __ZEPHYR__
+        /* Pre-allocate filtered iovec arrays for each mmsghdr slot.
+         * Each message has at most 4 iovecs (C_ARRAY_SIZE(message->vecs)). */
+        struct iovec filtered_iovs[SOCKET_MMSG_MAX][4];
+        size_t filtered_counts[SOCKET_MMSG_MAX];
+#endif
         struct msghdr *msg;
         int i, n_msgs;
 
@@ -815,8 +821,24 @@ static int socket_dispatch_write(Socket *socket) {
 
                 msg->msg_name = NULL;
                 msg->msg_namelen = 0;
+#ifdef __ZEPHYR__
+                /*
+                 * Zephyr's socketpair spair_write rejects buffer==NULL or
+                 * count==0 with EINVAL. D-Bus message vecs[] has 4 fixed
+                 * slots where vecs[1] and vecs[2] default to {NULL, 0}.
+                 * Filter them out to avoid EINVAL from spair_write.
+                 */
+                filtered_counts[n_msgs] = 0;
+                for (size_t _vi = 0; _vi < buffer->n_vecs && _vi < 4; _vi++) {
+                        if (buffer->vecs[_vi].iov_len > 0)
+                                filtered_iovs[n_msgs][filtered_counts[n_msgs]++] = buffer->vecs[_vi];
+                }
+                msg->msg_iov = filtered_iovs[n_msgs];
+                msg->msg_iovlen = filtered_counts[n_msgs];
+#else
                 msg->msg_iov = buffer->vecs;
                 msg->msg_iovlen = buffer->n_vecs;
+#endif
                 if (buffer->message &&
                     buffer->message->fds &&
                     socket_buffer_is_uncomsumed(buffer)) {
