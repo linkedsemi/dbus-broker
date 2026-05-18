@@ -72,6 +72,7 @@ struct DispatchContext {
         CList ready_list;
         size_t n_files;
         int terminate_pipe[2];                  // Pipe for termination notification in poll
+        int source;  // 0: broker poll, 1: sd-event
 #else
         int epoll_fd;
         CList ready_list;

@@ -225,6 +225,7 @@ int broker_run(Broker *broker) {
                 return error_fold(r);
 
         do {
+                broker->dispatcher.source = 0;
                 r = dispatch_context_dispatch(&broker->dispatcher);
 
                 if (r == DISPATCH_E_EXIT)
@@ -256,6 +257,7 @@ int broker_run(Broker *broker) {
                 return error_fold(r);
 
         do {
+                broker->dispatcher.source = 0;
                 r = dispatch_context_dispatch(&broker->dispatcher);
                 if (r == DISPATCH_E_EXIT)
                         r = MAIN_EXIT;

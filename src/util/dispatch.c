@@ -58,7 +58,7 @@
 #include "util/dispatch.h"
 #include "util/error.h"
 
-LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_INF);
+// LOG_MODULE_DECLARE(DBUS_BROKER, LOG_LEVEL_INF);
 
 /**
  * dispatch_file_init() - initialize dispatch file
@@ -116,14 +116,6 @@ int dispatch_file_init(DispatchFile *file,
 
         ctx->n_fds_used++;
 
-        // Wake up the poll thread by writing to terminate_pipe
-        char byte = 1;
-        ssize_t write_result = write(ctx->terminate_pipe[1], &byte, 1);
-        if (write_result < 0) {
-            LOG_ERR("dispatch_file_init: failed to write to terminate_pipe, errno=%d", errno);
-        } else {
-            LOG_DBG("dispatch_file_init: woke up poll thread by writing to terminate_pipe");
-        }
 #else
         int r;
 
@@ -145,11 +137,25 @@ int dispatch_file_init(DispatchFile *file,
         file->ready_link = (CList)C_LIST_INIT(file->ready_link);
         file->fn = fn;
         file->fd = fd;
-        file->user_mask = 0;
+        file->user_mask = events;  // Set initial user_mask from events parameter
         file->kernel_mask = mask;
         file->events = events;
 
         ++file->context->n_files;
+
+#ifdef __ZEPHYR__
+        // Wake up the poll thread AFTER setting file masks, so poll sees correct user_mask/kernel_mask
+        // BUGFIX: terminated pipe write was previously before user_mask/kernel_mask were set,
+        // causing the next poll to see uninitialized masks (both 0), meaning events=0x0 for new fds
+        char byte = 1;
+        ssize_t write_result = write(ctx->terminate_pipe[1], &byte, 1);
+        if (write_result < 0) {
+            printk("[dispatch] dispatch_file_init: failed to write to terminate_pipe, errno=%d\n", errno);
+        } else {
+        //     printk("[dispatch] dispatch_file_init: woke up poll thread AFTER setting masks, user_mask=0x%x, kernel_mask=0x%x\n",
+        //             file->user_mask, file->kernel_mask);
+        }
+#endif
 
         return 0;
 }
@@ -168,7 +174,7 @@ int dispatch_file_init(DispatchFile *file,
  */
 void dispatch_file_deinit(DispatchFile *file) {
         if (!file->context) {
-                LOG_DBG("[dispatch] dispatch_file_deinit: file->context is NULL, nothing to do");
+                printk("[dispatch] dispatch_file_deinit: file->context is NULL, nothing to do\n");
                 return;
         }
         
@@ -190,14 +196,14 @@ void dispatch_file_deinit(DispatchFile *file) {
                 c_list_unlink(&file->ready_link);
                 --file->context->n_files;
                 
-                LOG_DBG("[dispatch] dispatch_file_deinit: removed file=%p, fd=%d, n_files=%zu, n_fds_used=%zu", 
-                        file, file->fd, file->context->n_files, file->context->n_fds_used);
+                // printk("[dispatch] dispatch_file_deinit: removed file=%p, fd=%d, n_files=%zu, n_fds_used=%zu", 
+                //         file, file->fd, file->context->n_files, file->context->n_fds_used);
                 break;
             }
         }
         
         if (!found) {
-            LOG_ERR("[dispatch] dispatch_file_deinit: file=%p not found in context! n_files=%zu, n_fds_used=%zu", 
+            printk("[dispatch] dispatch_file_deinit: file=%p not found in context! n_files=%zu, n_fds_used=%zu\n", 
                     file, file->context->n_files, file->context->n_fds_used);
         }
 #else
@@ -299,12 +305,12 @@ int dispatch_context_init(DispatchContext *ctx) {
         // Initialize termination pipe
         int ret = socketpair(AF_UNIX, SOCK_STREAM, 0, ctx->terminate_pipe);
         if (ret < 0) {
-            LOG_ERR("socketpair failed: %d", errno);
+            printk("[dispatch] socketpair failed: %d\n", errno);
             free(ctx->fds);
             free(ctx->files);
             return error_origin(-errno);
         }
-        LOG_INF("Termination pipe initialized: [%d, %d]", ctx->terminate_pipe[0], ctx->terminate_pipe[1]);
+        // printk("Termination pipe initialized: [%d, %d]", ctx->terminate_pipe[0], ctx->terminate_pipe[1]);
 #else
         ctx->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
         if (ctx->epoll_fd < 0)
@@ -325,8 +331,8 @@ int dispatch_context_init(DispatchContext *ctx) {
  * safe to call this function multiple times.
  */
 void dispatch_context_deinit(DispatchContext *ctx) {
-        LOG_DBG("[dispatch] dispatch_context_deinit: n_files=%zu, n_fds_used=%zu, ready_list_empty=%d", 
-                ctx->n_files, ctx->n_fds_used, c_list_is_empty(&ctx->ready_list));
+        // printk("[dispatch] dispatch_context_deinit: n_files=%zu, n_fds_used=%zu, ready_list_empty=%d", 
+        //         ctx->n_files, ctx->n_fds_used, c_list_is_empty(&ctx->ready_list));
         
         c_assert(!ctx->n_files);
         c_assert(c_list_is_empty(&ctx->ready_list));
@@ -373,7 +379,7 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
     
     // Check if arrays are valid
     if (total_fds > 0 && (!ctx->fds || !ctx->files)) {
-        LOG_ERR("dispatch_context_poll: n_fds_used=%zu but fds or files is NULL!", total_fds);
+        printk("[dispatch] dispatch_context_poll: n_fds_used=%zu but fds or files is NULL!\n", total_fds);
         return error_origin(-EFAULT);
     }
     
@@ -388,7 +394,7 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
     // 复制原始的 fds 和 files 指针，但根据 user_mask 设置要监听的事件
     for (size_t i = 0; i < total_fds; i++) {
         if (!ctx->files[i]) {
-            LOG_ERR("dispatch_context_poll: files[%u] is NULL!", i);
+            printk("[dispatch] dispatch_context_poll: files[%u] is NULL!\n", i);
             free(temp_fds);
             free(temp_files);
             return error_origin(-EFAULT);
@@ -408,26 +414,26 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
     // Validate all FDs before calling poll
     for (size_t i = 0; i < total_fds + 1; i++) {
         if (temp_fds[i].fd < 0) {
-            LOG_ERR("dispatch_context_poll: Invalid fd at index %zu: fd=%d", i, temp_fds[i].fd);
+            printk("[dispatch] dispatch_context_poll: Invalid fd at index %zu: fd=%d\n", i, temp_fds[i].fd);
             free(temp_fds);
             free(temp_files);
             return error_origin(-EINVAL);
         }
     }
     
-    LOG_DBG("[dispatch] poll called: total_fds=%zu, timeout=%d, terminate_pipe[0]=%d", 
-            total_fds, timeout, ctx->terminate_pipe[0]);
+//     printk("[dispatch] poll called: total_fds=%zu, timeout=%d, terminate_pipe[0]=%d", 
+//             total_fds, timeout, ctx->terminate_pipe[0]);
     
     int result = poll(temp_fds, total_fds + 1, timeout);
 
-    LOG_DBG("[dispatch] poll returned: result=%d, errno=%d", result, errno);
+//     printk("[dispatch] poll returned: result=%d, errno=%d", result, errno);
     
     if (result < 0) {
         free(temp_fds);
         free(temp_files);
         if (errno == EINTR)
             return 0;
-        LOG_WRN("dispatch_context_poll: poll error, errno=%d", errno);
+        printk("[dispatch] dispatch_context_poll: poll error, errno=%d\n", errno);
         return error_origin(-errno);
     }
 
@@ -437,9 +443,9 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
         char buffer[32];
         ssize_t read_bytes = recv(ctx->terminate_pipe[0], buffer, sizeof(buffer), 0);
         if (read_bytes > 0) {
-            LOG_DBG("dispatch_context_poll: cleared terminate_pipe, read %zd bytes", read_bytes);
+        //     printk("[dispatch] dispatch_context_poll: cleared terminate_pipe, read %zd bytes\n", read_bytes);
         } else {
-            LOG_WRN("dispatch_context_poll: recv returned %zd, errno=%d", read_bytes, errno);
+            printk("[dispatch] dispatch_context_poll: recv returned %zd, errno=%d\n", read_bytes, errno);
         }
     }
 
@@ -452,20 +458,20 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
 
         // 检查 NULL 指针和野指针
         if (!f || f->fd < 0) {
-            LOG_WRN("dispatch_context_poll: fd[%u] has invalid DispatchFile", i);
+            printk("[dispatch] dispatch_context_poll: fd[%u] has invalid DispatchFile\n", i);
             continue;
         }
 
         // 验证 fd 匹配
         if (temp_fds[i].fd != f->fd) {
-            LOG_ERR("dispatch_context_poll: fd mismatch! temp_fds[%u].fd=%d, files[%u]->fd=%d",
+            printk("[dispatch] dispatch_context_poll: fd mismatch! temp_fds[%u].fd=%d, files[%u]->fd=%d\n",
                     i, temp_fds[i].fd, i, f->fd);
             continue;  // 跳过不匹配的
         }
 
         // 验证 context 指针
         if (f->context != ctx) {
-            LOG_WRN("dispatch_context_poll: fd[%u] DispatchFile has wrong context", i);
+            printk("[dispatch] dispatch_context_poll: fd[%u] DispatchFile has wrong context\n", i);
             continue;
         }
 
@@ -547,14 +553,14 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
         DispatchFile *file;
         int r;
 
-        LOG_DBG("[dispatch] dispatch_context_dispatch called, ready_list empty=%d", 
-                c_list_is_empty(&ctx->ready_list));
+        // printk("[dispatch] dispatch_context_dispatch ENTER, ready_list empty=%d, n_fds_used=%zu, source=%d\n", 
+        //         c_list_is_empty(&ctx->ready_list), ctx->n_fds_used, ctx->source);
 
         /* Use non-blocking poll (timeout=0) to avoid blocking in dispatch phase.
          * The blocking should happen in sd_event_wait, not here. */
-        r = dispatch_context_poll(ctx, 0);
+        r = dispatch_context_poll(ctx, ctx->source ? 0 : -1);
         
-        LOG_DBG("[dispatch] dispatch_context_poll returned %d", r);
+        // printk("[dispatch] dispatch_context_poll returned %d\n", r);
         
         if (r)
                 return error_fold(r);
@@ -575,23 +581,23 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
         c_list_swap(&todo, &ctx->ready_list);
 
         while ((file = c_list_first_entry(&todo, DispatchFile, ready_link))) {
-                // LOG_DBG("dispatch_context_dispatch: About to dispatch file=%p", file);
+                // printk("dispatch_context_dispatch: About to dispatch file=%p\n", file);
                 if (!file) {
-                        LOG_ERR("dispatch_context_dispatch: file is NULL!");
+                        printk("[dispatch] dispatch_context_dispatch: file is NULL!\n");
                         break;
                 }
                 if (file->fd < 0) {
-                        // LOG_ERR("dispatch_context_dispatch: file->fd is invalid: %d", file->fd);
+                        // printk("dispatch_context_dispatch: file->fd is invalid: %d\n", file->fd);
                         c_list_unlink(&file->ready_link);
                         continue;
                 }
                 if (!file->fn) {
-                        LOG_ERR("dispatch_context_dispatch: file->fn is NULL!");
+                        printk("[dispatch] dispatch_context_dispatch: file->fn is NULL!\n");
                         c_list_unlink(&file->ready_link);
                         continue;
                 }
                 if (file->context != ctx) {
-                        LOG_ERR("dispatch_context_dispatch: file->context mismatch: file=%p, ctx=%p", file->context, ctx);
+                        printk("[dispatch] dispatch_context_dispatch: file->context mismatch: file=%p, ctx=%p\n", file->context, ctx);
                         c_list_unlink(&file->ready_link);
                         continue;
                 }
@@ -611,6 +617,8 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
         }
 
         c_assert(c_list_is_empty(&todo));
+        // printk("[dispatch] dispatch_context_dispatch returning %d, ready_list empty=%d\n", r, 
+        //         c_list_is_empty(&ctx->ready_list));
         return r;
 }
 

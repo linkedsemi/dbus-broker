@@ -34,7 +34,7 @@ static int connection_init(Connection *c,
                                dispatch_fn,
                                fd,
                                EPOLLHUP | EPOLLIN | EPOLLOUT,
-                               0);
+                               EPOLLIN | EPOLLOUT);
 #else
         r = dispatch_file_init(&connection->socket_file,
                                dispatch_ctx,
