@@ -25,7 +25,7 @@ if(CONFIG_DBUS_BROKER)
     )
 
     # Add subproject include directories globally
-    zephyr_include_directories(
+    zephyr_export_include_directories(
         ${ZEPHYR_CURRENT_MODULE_DIR}/subprojects/libcstdaux-1/src
         ${ZEPHYR_CURRENT_MODULE_DIR}/subprojects/libcrbtree-3/src
         ${ZEPHYR_CURRENT_MODULE_DIR}/subprojects/libclist-3/src
