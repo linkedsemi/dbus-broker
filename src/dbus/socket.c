@@ -292,7 +292,17 @@ static void socket_shutdown_now(Socket *socket) {
 
         if (!socket->hup_out) {
                 r = shutdown(socket->fd, SHUT_WR);
+#ifdef __ZEPHYR__
+                /* In Zephyr, the fd might already be closed by the client side.
+                 * Don't assert here - just log and continue with cleanup. */
+                if (r < 0) {
+                        /* FD might already be closed, mark as hung up anyway */
+                        socket_hangup_output(socket);
+                        return;
+                }
+#else
                 c_assert(r >= 0);
+#endif
 
                 socket_hangup_output(socket);
         }
