@@ -558,7 +558,14 @@ int dispatch_context_dispatch(DispatchContext *ctx) {
 
         /* Use non-blocking poll (timeout=0) to avoid blocking in dispatch phase.
          * The blocking should happen in sd_event_wait, not here. */
-        r = dispatch_context_poll(ctx, ctx->source ? 0 : -1);
+        r = dispatch_context_poll(ctx, ctx->source ? 0 :
+#ifdef __ZEPHYR__
+                                  100   /* Zephyr: 100ms timeout avoids blocking
+                                         * forever when no POLLOUT is signaled */
+#else
+                                  -1
+#endif
+                                  );
         
         // printk("[dispatch] dispatch_context_poll returned %d\n", r);
         
