@@ -15,6 +15,7 @@
 #include <c-stdaux.h>
 #include <linux/sockios.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -545,6 +546,7 @@ static int socket_recvmsg(Socket *socket,
 #ifdef __ZEPHYR__
         /* Zephyr doesn't support recvmsg(), use recv() instead */
         /* Note: file descriptor passing is not supported on Zephyr */
+        memset(&msg, 0, sizeof(msg));
         l = recv(socket->fd, (char *)buffer + *from, to - *from, MSG_DONTWAIT);
         /* Initialize msg_flags since recv() doesn't set it */
         msg.msg_flags = 0;
