@@ -34,10 +34,15 @@ static int c_dvar_write_data(CDVar *var, int alignment, const void *data, size_t
                         n = (unsigned long long)1 << shift;
                 }
 
-                p = realloc(var->data, n);
+                // p = realloc(var->data, n);
+                p = aligned_alloc(8, n);
                 if (!p)
                         return -ENOMEM;
 
+                if (var->data) {
+                        memcpy(p, var->data, var->n_data < n ? var->n_data : n);
+                        free(var->data);
+                }
                 var->data = p;
                 var->n_data = n;
         }
