@@ -423,9 +423,9 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
     
 //     printk("[dispatch] poll called: total_fds=%zu, timeout=%d, terminate_pipe[0]=%d", 
 //             total_fds, timeout, ctx->terminate_pipe[0]);
-    
-    int result = poll(temp_fds, total_fds + 1, timeout);
 
+    k_msleep(15);
+    int result = poll(temp_fds, total_fds + 1, timeout);
 //     printk("[dispatch] poll returned: result=%d, errno=%d", result, errno);
     
     if (result < 0) {
@@ -443,7 +443,7 @@ int dispatch_context_poll(DispatchContext *ctx, int timeout) {
         char buffer[32];
         ssize_t read_bytes = recv(ctx->terminate_pipe[0], buffer, sizeof(buffer), 0);
         if (read_bytes > 0) {
-        //     printk("[dispatch] dispatch_context_poll: cleared terminate_pipe, read %zd bytes\n", read_bytes);
+            // printk("[dispatch] dispatch_context_poll: cleared terminate_pipe, read %zd bytes\n", read_bytes);
         } else {
             printk("[dispatch] dispatch_context_poll: recv returned %zd, errno=%d\n", read_bytes, errno);
         }
