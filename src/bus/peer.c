@@ -439,9 +439,7 @@ Peer *peer_free(Peer *peer) {
         user_unref(peer->user);
         --peer->bus->peers.n_peers;
         free(peer);
-#ifndef CONFIG_DBUS_BROKER_SOCKETPOOL
         close(fd);
-#endif
         return NULL;
 }
 
