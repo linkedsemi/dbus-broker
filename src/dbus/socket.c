@@ -1001,15 +1001,19 @@ int socket_dispatch(Socket *socket, uint32_t event) {
         case EPOLLHUP:
                 socket_hangup_output(socket);
                 /*
-                 * On Linux epoll, POLLHUP and POLLIN are usually returned
-                 * together, so socket_dispatch_read() handles the input
-                 * hangup. On Zephyr's AF_UNIX/poll implementation, only
-                 * POLLHUP may be returned without POLLIN, so we must
-                 * explicitly signal the input hangup here. Without this,
-                 * the broker's peer is never freed, causing unique name
-                 * (:1.x) leaks.
+                 * On Zephyr's AF_UNIX poll, POLLHUP may arrive without
+                 * POLLIN even when the peer is fully disconnected (no
+                 * pending data).  We must try to read here so that
+                 * socket_dispatch_read() can detect and handle the EOF
+                 * via socket_hangup_input().  Without this explicit
+                 * read, the broker would never learn the peer went
+                 * away, causing unique-name (:1.x) leaks.
+                 *
+                 * If the POLLHUP was premature (stale event, not yet
+                 * disconnected), the read simply succeeds and processes
+                 * any available data normally — no harm done.
                  */
-                socket_hangup_input(socket);
+                socket_dispatch_read(socket);
                 break;
         }
 
