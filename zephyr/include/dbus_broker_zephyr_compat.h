@@ -84,6 +84,20 @@ extern char *strchr(const char *str, int c);
 #include <zephyr/net/socket.h>
 #include <zephyr/net/net_ip.h>
 
+/*
+ * Rename dbus-broker's log_init family to avoid symbol clashes with Zephyr's
+ * logging subsystem. This MUST be visible to every translation unit that calls
+ * these functions (their log.h prototypes are macro-expanded through this
+ * rename), not only util/log.c where the rename used to live. Leaving it only
+ * in log.c made external callers emit a literal `log_init` symbol that the
+ * linker could not resolve (the definition is `dbus_broker_log_init`).
+ */
+#define log_init dbus_broker_log_init
+#define log_init_stderr dbus_broker_log_init_stderr
+#define log_init_journal dbus_broker_log_init_journal
+#define log_init_journal_consume dbus_broker_log_init_journal_consume
+#define log_deinit dbus_broker_log_deinit
+
 #endif
 
 

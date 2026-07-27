@@ -52,6 +52,22 @@ int accept4(int sockfd, struct sockaddr *addr, socklen_t *addrlen, int flags)
     if (flags & SOCK_CLOEXEC) {
         fcntl(fd, F_SETFD, FD_CLOEXEC);
     }
+
+    /*
+     * Honor SOCK_NONBLOCK. dbus-broker is a single-threaded event
+     * loop and strictly requires all peer fds to be non-blocking:
+     * dropping this flag lets a slow client (full recv pipe) block
+     * the broker in a write, stalling AUTH handshakes of every other
+     * peer ("Bus not ready" timeouts on connect).
+     */
+    if (flags & SOCK_NONBLOCK) {
+        int fl = fcntl(fd, F_GETFL, 0);
+
+        if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) {
+            close(fd);
+            return -1;
+        }
+    }
     
     return fd;
 }

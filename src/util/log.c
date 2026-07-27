@@ -88,12 +88,9 @@
 #include "util/misc.h"
 
 #ifdef __ZEPHYR__
-/* Avoid symbol conflicts with Zephyr's log subsystem */
-#define log_init dbus_broker_log_init
-#define log_init_stderr dbus_broker_log_init_stderr
-#define log_init_journal dbus_broker_log_init_journal
-#define log_init_journal_consume dbus_broker_log_init_journal_consume
-#define log_deinit dbus_broker_log_deinit
+#include <zephyr/sys/printk.h>
+/* The log_init family rename now lives in dbus_broker_zephyr_compat.h (pulled
+ * in via util/log.h) so every translation unit sees it consistently. */
 #endif
 
 /* lets retrict log records to 2MiB */
@@ -554,7 +551,18 @@ int log_vcommitf(Log *log, const char *format, va_list args) {
 
         switch (log->mode) {
         case LOG_MODE_NONE:
+#ifdef __ZEPHYR__
+                /* The Zephyr port runs the broker with LOG_NULL (no backing
+                 * fd), which used to silently drop every broker log message,
+                 * including the reason a peer got disconnected. Route the
+                 * message to the console instead so it is captured. */
+                printk("[dbus-broker] ");
+                vprintk(format, args);
+                printk("\n");
                 r = error_trace(log->error);
+#else
+                r = error_trace(log->error);
+#endif
                 break;
         case LOG_MODE_STDERR:
                 r = log_commit_stderr(log, format, args);
@@ -586,6 +594,19 @@ int log_vcommitf(Log *log, const char *format, va_list args) {
  * pairs.
  */
 void log_append(Log *log, const void *data, size_t n_data) {
+#ifdef __ZEPHYR__
+        /*
+         * In LOG_MODE_NONE the commit path (log_vcommitf) only printks the
+         * message and never touches the journal staging buffer, so appending
+         * to it (which would allocate a memfd + mmap on this port, always
+         * failing and poisoning log->error) is pointless. Skip it, matching
+         * log_append_common()/log_vappendf() above. A non-zero log->error here
+         * would otherwise leak into log_commitf()'s return value and get
+         * mistaken for a real dispatch error, killing the whole broker.
+         */
+        if (log->mode == LOG_MODE_NONE)
+                return;
+#endif
         if (!n_data || !log_alloc(log))
                 return;
 
@@ -610,6 +631,17 @@ void log_append(Log *log, const void *data, size_t n_data) {
 void log_vappendf(Log *log, const char *format, va_list args) {
         int r;
 
+#ifdef __ZEPHYR__
+        /*
+         * In LOG_MODE_NONE the commit path (log_vcommitf) only printks the
+         * message and never touches the journal staging buffer, so appending
+         * to it (which allocates a memfd + mmap on this port, always failing
+         * and poisoning log->error) is pointless. Skip it, matching
+         * log_append_common()/log_append() above.
+         */
+        if (log->mode == LOG_MODE_NONE)
+                return;
+#endif
         if (!log_alloc(log))
                 return;
 
@@ -641,6 +673,18 @@ void log_append_common(Log *log,
                        int error,
                        const char *id,
                        LogProvenance prov) {
+#ifdef __ZEPHYR__
+        /*
+         * In LOG_MODE_NONE the commit path (log_vcommitf) only printks the
+         * message and never touches the journal staging buffer, so
+         * allocating it here via log_alloc() (memfd + mmap) is pure waste
+         * and, on this port, an avoidable source of stack pressure. Skip the
+         * structured-field staging entirely in NONE mode.
+         */
+        if (log->mode == LOG_MODE_NONE)
+                return;
+#endif
+
         /*
          * Use LOG_DAEMON if the log-facility is 0. Most people don't specify
          * any facility, so lets just apply a default. Note that 0 actually
